@@ -3,7 +3,7 @@
 This project allows you to create a web archive and serve it using [Apache Tomcat](http://tomcat.apache.org/), such that 
 you can provide validation of EPUB files using [EpubCheck](https://github.com/IDPF/epubcheck) via a web service.
 
-https://github.com/IDPF/epubcheck
+The notes below presume a Mac build environment, but it should be relatively easy to adapt them to other environments.
 
 * Clone the EpubCheck repo
 
