@@ -43,7 +43,29 @@ specifically include the correct version number, as found in the name of .jar fi
 
 		<property name="version" value="3.0.1" />
 
-* If you want to customise the HTML and CSS used for the web service, then make the amendments to the code in `epubcheck-web\http_root`
+* Place your customised HTML (as `index.html`) and CSS in `epubcheck-web\http_root` &#8212; at a minimum you'll need:
+
+		<html>
+		    <head>
+		        <meta charset="utf-8">
+		        <title>EpubCheck for Web</title>
+
+		    </head>
+		    <body>
+		            <form action="Check" method="POST" enctype="multipart/form-data">
+		                <table>
+		                    <tr>
+		                        <td><span class="label">Epub file:</span></td>
+		                        <td><input type="file" style="width:20em" name="file" /></td>
+		                    </tr>
+		                    <tr>
+		                        <td></td>
+		                        <td><input type="submit" value="Check validity"/></td>
+		                    </tr>
+		                </table>
+		            </form>
+		    </body>
+		</html>
 
 * Install ant and use it to build the `epubcheck.war`:
 
