@@ -1,6 +1,6 @@
 # EpubCheck Web Archive build tool
 
-This project allows you to create a web archive and serve it using [Apache Tomcat](http://tomcat.apache.org/), such that 
+This project allows you to create a web archive and serve it using [Apache Tomcat](http://tomcat.apache.org/), such that
 you can provide validation of EPUB files using [EpubCheck](https://github.com/IDPF/epubcheck) via a web service.
 
 This project is licensed under the same license as the EpubCheck project, namely, the <a href="http://opensource.org/licenses/BSD-3-Clause">BSD 3 license</a>.
@@ -17,6 +17,8 @@ s epubcheck is written in Java and not being a Java programmer myself (and there
 
 # The build process
 
+Note that we need to build using a JDK version which is no older than the Java version that we'll be using on the server, otherwise we'l get errors while serving. Therefore, it may be a good idea to build on the server itself. Also, we've had more luck using the Oracle JDK, instead of the OpenJDK.
+
 * Clone the EpubCheck repo
 
 		git clone https://github.com/IDPF/epubcheck.git
@@ -25,23 +27,46 @@ s epubcheck is written in Java and not being a Java programmer myself (and there
 
 		cd epubcheck/
 		git tag -l
-		git checkout tags/v3.0.1
+		git checkout tags/v4.0.1
 
 * Install <a href="http://maven.apache.org/">maven</a>, and use it to build the release (this may take some time, because of maven needing to boostrap itself)
 
 		brew install maven
 		mvn install
 
-* This will create a .jar file in `epubcheck/target/`, e.g. `epubcheck-3.0.1.jar`
+* This will create a .jar file in `epubcheck/target/`, e.g. `epubcheck.jar`
 
 * At the root level, checkout the EpubCheck .war code (i.e. this repo)
 
 		git checkout epubcheck-web
 
-* Make some changes to the build file, `epubcheck-web\build-war.xml`, 
+* Make some changes to the build file, `epubcheck-web\build-war.xml`,
 specifically include the correct version number, as found in the name of .jar file (e.g.)
 
-		<property name="version" value="3.0.1" />
+		<property name="version" value="4.0.1" />
+
+* If epubcheck has updated their libraries, we'll need to copy them over to `lib`, and ensure that they're referenced in the classpath in the `build-war.xml`, e.g.:
+
+		<path id="epubcheckServlet.classpath">
+		...
+			<fileset dir="${epubcheck.web.includelibs}">
+				<include name="common-image-*.jar" />
+				<include name="common-io-*.jar" />
+				<include name="common-lang-*.jar" />
+				<include name="commons-compress-*.jar" />
+				<include name="guava-*.jar" />
+				<include name="imageio-jpeg-*.jar" />
+				<include name="imageio-metadata-*.jar" />
+				<include name="jackson-core-asl-*.jar" />
+				<include name="jackson-mapper-asl-*.jar" />
+				<include name="jing-*.jar" />
+				<include name="sac-*.jar" />
+				<include name="Saxon-*.jar" />
+			</fileset>
+		...
+		</path>
+
+* Also, we may need to include other source libraries from epubcheck into the `src` folder.
 
 * Place your customised HTML (as `index.html`) and CSS in `epubcheck-web\http_root` &#8212; at a minimum you'll need:
 
@@ -76,7 +101,7 @@ specifically include the correct version number, as found in the name of .jar fi
 * Install the `.war` (by dropping it in tomcat's `webapps` directory) and restart tomcat
 
 		cd /usr/local/tomcat/webapps
-		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-3.0.1.war epubcheck.war
+		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-4.0.1.war epubcheck.war
 		/etc/init.d/tomcat start
 
 Once Tomcat’s restarted, you should be able to see the epubcheck service at [http://localhost:8080/epubcheck](http://localhost:8080/epubcheck).

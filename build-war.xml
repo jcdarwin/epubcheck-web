@@ -9,7 +9,7 @@
 	<property name="epubcheck.distribution.dir" value="${epubcheck.base.dir}/target" />
 
 	<property name="epubcheck.web.base.dir" value="${basedir}" />
-	<property name="epubcheck.web.includelibs" value="${basedir}" />
+	<property name="epubcheck.web.includelibs" value="${epubcheck.web.base.dir}/lib" />
 	<property name="epubcheck.web.http_root" value="${epubcheck.web.base.dir}/http_root" />
 	<property name="epubcheck.web.dist.dir" value="${epubcheck.web.base.dir}/dist" />
 	<property name="epubcheck.web.build.dir" value="${epubcheck.web.base.dir}/bin" />
@@ -23,8 +23,22 @@
 			<include name="commons-io-*.jar" />
 			<include name="javax.servlet-*.jar" />
 		</fileset>
+		<fileset dir="${epubcheck.web.includelibs}">
+			<include name="common-image-*.jar" />
+			<include name="common-io-*.jar" />
+			<include name="common-lang-*.jar" />
+			<include name="commons-compress-*.jar" />
+			<include name="guava-*.jar" />
+			<include name="imageio-jpeg-*.jar" />
+			<include name="imageio-metadata-*.jar" />
+			<include name="jackson-core-asl-*.jar" />
+			<include name="jackson-mapper-asl-*.jar" />
+			<include name="jing-*.jar" />
+			<include name="sac-*.jar" />
+			<include name="Saxon-*.jar" />
+		</fileset>
 		<fileset dir="${epubcheck.distribution.dir}">
-			<include name="epubcheck-${version}.jar" />
+			<include name="epubcheck.jar" />
 		</fileset>
 	</path>
 
@@ -45,9 +59,11 @@
 	<target name="compile" description="Compiles all src classes" depends="removeClasses">
 		<javac 	srcdir="${epubcheck.web.base.dir}/src"
 				destdir="${epubcheck.web.build.dir}"
- 				source="1.4"
+ 				source="1.5"
 				classpathref="epubcheckServlet.classpath"
-				debug="true">
+				debug="true"
+				includeantruntime="false"
+				>
 			<exclude name="**/SampleServer.java"/>
 		</javac>
 	</target>
