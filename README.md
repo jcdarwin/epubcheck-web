@@ -13,7 +13,7 @@ However, recent builds of EpubCheck have not been accompanied by this .war file 
 
 So, after running into confusion where a client mistakenly thought their EPUB3 was invalid because it was being checked against an older version of the epubcheck .war file used by a web service, I thought it was high time I worked out how to create a .war from a recent release.
 
-s epubcheck is written in Java and not being a Java programmer myself (and there’s good reason for this, summed up nicely in this post about <a href="http://steve-yegge.blogspot.co.nz/2006/03/execution-in-kingdom-of-nouns.html">Execution in the Kingdom of Nouns</a>), I was a little tremulous about tackling this, but it actually turned out to be relatively easy. The steps are below, and the presumption is that you’re running a Mac build environment (and using the <a href="http://brew.sh/">Homebrew package manager</a>), but it should be relatively easy to adapt them to other environments.
+As epubcheck is written in Java and not being a Java programmer myself (and there’s good reason for this, summed up nicely in this post about <a href="http://steve-yegge.blogspot.co.nz/2006/03/execution-in-kingdom-of-nouns.html">Execution in the Kingdom of Nouns</a>), I was a little tremulous about tackling this, but it actually turned out to be relatively easy. The steps are below, and the presumption is that you’re running a Mac build environment (and using the <a href="http://brew.sh/">Homebrew package manager</a>), but it should be relatively easy to adapt them to other environments.
 
 # The build process
 
@@ -27,7 +27,7 @@ Note that we need to build using a JDK version which is no older than the Java v
 
 		cd epubcheck/
 		git tag -l
-		git checkout tags/v4.0.1
+		git checkout tags/v4.0.2
 
 * Install <a href="http://maven.apache.org/">maven</a>, and use it to build the release (this may take some time, because of maven needing to boostrap itself)
 
@@ -43,9 +43,9 @@ Note that we need to build using a JDK version which is no older than the Java v
 * Make some changes to the build file, `epubcheck-web\build-war.xml`,
 specifically include the correct version number, as found in the name of .jar file (e.g.)
 
-		<property name="version" value="4.0.1" />
+		<property name="version" value="4.0.2" />
 
-* If epubcheck has updated their libraries, we'll need to copy them over to `lib`, and ensure that they're referenced in the classpath in the `build-war.xml`, e.g.:
+* If epubcheck has updated their libraries, we'll need to copy them over to `lib`, and ensure that they're referenced in the classpath in the `build-war.xml`.  We should also copy over `epubcheck.jar` that we've build or downloaded.  Hence, e.g.:
 
 		<path id="epubcheckServlet.classpath">
 		...
@@ -62,9 +62,36 @@ specifically include the correct version number, as found in the name of .jar fi
 				<include name="jing-*.jar" />
 				<include name="sac-*.jar" />
 				<include name="Saxon-*.jar" />
+				<include name="epubcheck.jar" />
 			</fileset>
 		...
 		</path>
+
+As we are not building `epubcheck.jar`, we should comment out references to it:
+
+		<!-- comment out the reference to the epubcheck.jar in the distribution directory -->
+		<!--
+		<fileset dir="${epubcheck.distribution.dir}">
+			<include name="epubcheck.jar" />
+		</fileset>
+		-->
+		...
+		
+		<!-- comment out the epubcheck.jar target as it's already built -->
+   		<!--
+		<target name="epubcheck" description="creates epubcheck.jar">
+			<ant dir="${epubcheck.base.dir}"/>
+		</target>
+     		-->
+		...
+		
+                <!-- comment out reference to epubcheck.jar as we're not building it -->
+		<!--
+			<zipfileset dir="${epubcheck.distribution.dir}" prefix="WEB-INF/lib">
+				<include name="epubcheck-*.jar" />
+			</zipfileset>
+		-->
+
 
 * Also, we may need to include other source libraries from epubcheck into the `src` folder.
 
@@ -101,7 +128,7 @@ specifically include the correct version number, as found in the name of .jar fi
 * Install the `.war` (by dropping it in tomcat's `webapps` directory) and restart tomcat
 
 		cd /usr/local/tomcat/webapps
-		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-4.0.1.war epubcheck.war
+		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-4.0.2.war epubcheck.war
 		/etc/init.d/tomcat start
 
 Once Tomcat’s restarted, you should be able to see the epubcheck service at [http://localhost:8080/epubcheck](http://localhost:8080/epubcheck).
