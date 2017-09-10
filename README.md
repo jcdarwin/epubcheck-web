@@ -1,15 +1,15 @@
-# EpubCheck Web Archive build tool
+# EPUBCheck Web Archive build tool
 
 This project allows you to create a web archive and serve it using [Apache Tomcat](http://tomcat.apache.org/), such that
-you can provide validation of EPUB files using [EpubCheck](https://github.com/IDPF/epubcheck) via a web service.
+you can provide validation of EPUB files using [EPUBCheck](https://github.com/IDPF/epubcheck) via a web service.
 
-This project is licensed under the same license as the EpubCheck project, namely, the <a href="http://opensource.org/licenses/BSD-3-Clause">BSD 3 license</a>.
+This project is licensed under the same license as the EPUBCheck project, namely, the <a href="http://opensource.org/licenses/BSD-3-Clause">BSD 3 license</a>.
 
 # The rationale
 
-Originally, the EpubCheck .jar fle was accompanied by a .war file, which was very useful as it could be hosted by a Java-based webserver (e.g. <a href="http://tomcat.apache.org/">Apache Tomcat</a>), and used to provide a web-based interface for EPUB validation using epubcheck. This is how the the IDPF offer their <a href="http://validator.idpf.org/">online EPUB validation service</a>.
+Originally, the `epubcheck.jar` fle was accompanied by a `.war` file, which was very useful as it could be hosted by a Java-based webserver (e.g. <a href="http://tomcat.apache.org/">Apache Tomcat</a>), and used to provide a web-based interface for EPUB validation using epubcheck. This is how the the IDPF offer their <a href="http://validator.idpf.org/">online EPUB validation service</a>.
 
-However, recent builds of EpubCheck have not been accompanied by this .war file meaning that, for your own purposes, you were looking at having to use the command line version, as described above. You could still of course use the IDPF’s <a href="http://validator.idpf.org/">online validation service</a>, but this is only for non-commercial use and for files less than 10MB.
+However, recent builds of EPUBCheck have not been accompanied by this `.war` file meaning that, for your own purposes, you were looking at having to use the command line version, as described above. You could still of course use the IDPF’s <a href="http://validator.idpf.org/">online validation service</a>, but this is only for non-commercial use and for files less than 10MB.
 
 So, after running into confusion where a client mistakenly thought their EPUB3 was invalid because it was being checked against an older version of the epubcheck .war file used by a web service, I thought it was high time I worked out how to create a .war from a recent release.
 
@@ -19,7 +19,7 @@ As epubcheck is written in Java and not being a Java programmer myself (and ther
 
 Note that we need to build using a JDK version which is no older than the Java version that we'll be using on the server, otherwise we'l get errors while serving. Therefore, it may be a good idea to build on the server itself. Also, we've had more luck using the Oracle JDK, instead of the OpenJDK.
 
-* Clone the EpubCheck repo
+* Clone the epubcheck repo
 
 		git clone https://github.com/IDPF/epubcheck.git
 
@@ -36,7 +36,7 @@ Note that we need to build using a JDK version which is no older than the Java v
 
 * This will create a .jar file in `epubcheck/target/`, e.g. `epubcheck.jar`
 
-* At the root level, checkout the EpubCheck .war code (i.e. this repo)
+* At the root level, checkout the epubcheck `.war` code (i.e. this repo)
 
 		git checkout epubcheck-web
 
@@ -76,16 +76,16 @@ As we are not building `epubcheck.jar`, we should comment out references to it:
 		</fileset>
 		-->
 		...
-		
+
 		<!-- comment out the epubcheck.jar target as it's already built -->
-   		<!--
-		<target name="epubcheck" description="creates epubcheck.jar">
-			<ant dir="${epubcheck.base.dir}"/>
-		</target>
-     		-->
+		<!--
+			<target name="epubcheck" description="creates epubcheck.jar">
+				<ant dir="${epubcheck.base.dir}"/>
+			</target>
+		-->
 		...
-		
-                <!-- comment out reference to epubcheck.jar as we're not building it -->
+
+		<!-- comment out reference to epubcheck.jar as we're not building it -->
 		<!--
 			<zipfileset dir="${epubcheck.distribution.dir}" prefix="WEB-INF/lib">
 				<include name="epubcheck-*.jar" />
@@ -100,14 +100,14 @@ As we are not building `epubcheck.jar`, we should comment out references to it:
 		<html>
 		    <head>
 		        <meta charset="utf-8">
-		        <title>EpubCheck for Web</title>
+		        <title>EPUBCheck for Web</title>
 
 		    </head>
 		    <body>
 		            <form action="Check" method="POST" enctype="multipart/form-data">
 		                <table>
 		                    <tr>
-		                        <td><span class="label">Epub file:</span></td>
+		                        <td><span class="label">EPUB file:</span></td>
 		                        <td><input type="file" style="width:20em" name="file" /></td>
 		                    </tr>
 		                    <tr>
