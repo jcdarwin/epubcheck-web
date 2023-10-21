@@ -22,335 +22,316 @@
 
 package com.adobe.epubcheck.ocf;
 
-import static com.adobe.epubcheck.opf.ValidationContext.ValidationContextPredicates.*;
-
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.text.Normalizer;
-import java.text.Normalizer.Form;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
+
+import org.w3c.epubcheck.constants.MIMEType;
+import org.w3c.epubcheck.core.AbstractChecker;
+import org.w3c.epubcheck.core.Checker;
+import org.w3c.epubcheck.core.CheckerFactory;
+import org.w3c.epubcheck.util.text.UnicodeUtils;
 
 import com.adobe.epubcheck.api.EPUBLocation;
 import com.adobe.epubcheck.api.EPUBProfile;
 import com.adobe.epubcheck.api.FeatureReport;
-import com.adobe.epubcheck.api.Report;
 import com.adobe.epubcheck.messages.MessageId;
 import com.adobe.epubcheck.opf.OPFChecker;
-import com.adobe.epubcheck.opf.OPFCheckerFactory;
-import com.adobe.epubcheck.opf.OPFData;
+import com.adobe.epubcheck.opf.OPFChecker30;
 import com.adobe.epubcheck.opf.OPFHandler;
 import com.adobe.epubcheck.opf.OPFHandler30;
+import com.adobe.epubcheck.opf.OPFItem;
 import com.adobe.epubcheck.opf.ValidationContext;
 import com.adobe.epubcheck.opf.ValidationContext.ValidationContextBuilder;
 import com.adobe.epubcheck.util.CheckUtil;
 import com.adobe.epubcheck.util.EPUBVersion;
 import com.adobe.epubcheck.util.FeatureEnum;
-import com.adobe.epubcheck.util.ValidatorMap;
+import com.adobe.epubcheck.util.InvalidVersionException;
 import com.adobe.epubcheck.vocab.EpubCheckVocab;
-import com.adobe.epubcheck.xml.XMLParser;
-import com.adobe.epubcheck.xml.XMLValidator;
-import com.adobe.epubcheck.xml.XMLValidators;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
 import com.google.common.collect.Iterables;
 
-public class OCFChecker
+import io.mola.galimatias.URL;
+
+public final class OCFChecker extends AbstractChecker
 {
-
-  @SuppressWarnings("unchecked")
-  private static final ValidatorMap validatorMap = ValidatorMap.builder()
-      .put(Predicates.and(path(OCFData.containerEntry), version(EPUBVersion.VERSION_2)),
-          XMLValidators.CONTAINER_20_RNG)
-      .put(Predicates.and(path(OCFData.containerEntry), version(EPUBVersion.VERSION_3)),
-          XMLValidators.CONTAINER_30_RNC)
-      .put(Predicates.and(path(OCFData.containerEntry), version(EPUBVersion.VERSION_3)),
-          XMLValidators.CONTAINER_30_RENDITIONS_SCH)
-      .put(Predicates.and(path(OCFData.encryptionEntry), version(EPUBVersion.VERSION_3)),
-          XMLValidators.ENC_30_RNC)
-      .put(Predicates.and(path(OCFData.encryptionEntry), version(EPUBVersion.VERSION_2)),
-          XMLValidators.ENC_20_RNG)
-      .put(Predicates.and(path(OCFData.signatureEntry), version(EPUBVersion.VERSION_2)),
-          XMLValidators.SIG_20_RNG)
-      .put(Predicates.and(path(OCFData.signatureEntry), version(EPUBVersion.VERSION_3)),
-          XMLValidators.SIG_30_RNC)
-      .put(
-          Predicates.and(path(OCFData.metadataEntry),
-              hasProp(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.MULTIPLE_RENDITION))),
-          XMLValidators.META_30_RNC)
-      .put(
-          Predicates.and(path(OCFData.metadataEntry),
-              hasProp(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.MULTIPLE_RENDITION))),
-          XMLValidators.META_30_SCH)
-      .put(Predicates.and(path(OCFData.metadataEntry),
-          hasProp(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.MULTIPLE_RENDITION)),
-          profile(EPUBProfile.EDUPUB)), XMLValidators.META_EDUPUB_SCH)
-      .putAll(hasProp(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.RENDITION_MAPPING)),
-          XMLValidators.RENDITION_MAPPING_RNC, XMLValidators.RENDITION_MAPPING_SCH)
-      .build();
-
-  private final ValidationContext context;
-  private final OCFPackage ocf;
-  private final Report report;
 
   public OCFChecker(ValidationContext context)
   {
-    Preconditions.checkState(context.ocf.isPresent());
-    this.context = context;
-    this.ocf = context.ocf.get();
-    this.report = context.report;
+    super(context);
+    Preconditions.checkArgument(MIMEType.EPUB.is(context.mimeType));
   }
 
-  public void runChecks()
+  public void check()
   {
     // Create a new validation context builder from the parent context
     // It will be augmented with detected validation version, profile, etc.
-    ValidationContextBuilder newContextBuilder = new ValidationContextBuilder(context);
+    OCFCheckerState state = new OCFCheckerState(context);
 
-    ocf.setReport(report);
-    if (!ocf.hasEntry(OCFData.containerEntry))
+    // Check the EPUB file (zip)
+    // -------------------------
+    //
+    checkZipFile();
+
+    // Check the OCF Container file structure
+    // --------------------------------------
+    //
+    if (!checkContainerStructure(state))
     {
-      report.message(MessageId.RSC_002, EPUBLocation.create(ocf.getName()));
       return;
     }
-    long l = ocf.getTimeEntry(OCFData.containerEntry);
-    if (l > 0)
-    {
-      Date d = new Date(l);
-      String formattedDate = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(d);
-      report.info(OCFData.containerEntry, FeatureEnum.CREATION_DATE, formattedDate);
-    }
-    OCFData containerData = ocf.getOcfData();
-
-    // retrieve the paths of root files
-    List<String> opfPaths = containerData.getEntries(OPFData.OPF_MIME_TYPE);
-    if (opfPaths == null || opfPaths.isEmpty())
-    {
-      report.message(MessageId.RSC_003, EPUBLocation.create(OCFData.containerEntry));
-      return;
-    }
-    else if (opfPaths.size() > 0)
-    {
-      if (opfPaths.size() > 1)
-      {
-        report.info(null, FeatureEnum.EPUB_RENDITIONS_COUNT, Integer.toString(opfPaths.size()));
-      }
-
-      // test every element for empty or missing @full-path attribute
-      // bugfix for issue 236 / issue 95
-      int rootfileErrorCounter = 0;
-      for (String opfPath : opfPaths)
-      {
-        if (opfPath == null)
-        {
-          ++rootfileErrorCounter;
-          report.message(MessageId.OPF_016, EPUBLocation.create(OCFData.containerEntry));
-        }
-        else if (opfPath.isEmpty())
-        {
-          ++rootfileErrorCounter;
-          report.message(MessageId.OPF_017, EPUBLocation.create(OCFData.containerEntry));
-        }
-        else if (!ocf.hasEntry(opfPath))
-        {
-          report.message(MessageId.OPF_002, EPUBLocation.create(OCFData.containerEntry), opfPath);
-          return;
-        }
-      }
-      if (rootfileErrorCounter == opfPaths.size())
-      {
-        // end validation at this point when @full-path attribute is missing in
-        // container.xml
-        // otherwise, tons of errors would be thrown
-        // ("XYZ exists in the zip file, but is not declared in the OPF file")
-        return;
-      }
-    }
-
-    //
-    // Compute the validation version
-    // ------------------------------
-    // Detect the version of the first root file
-    // and compare with the asked version (if set)
-    EPUBVersion detectedVersion = null;
-    final EPUBVersion validationVersion;
-    OPFData opfData = ocf.getOpfData().get(opfPaths.get(0));
-    if (opfData == null) return;// The error must have been reported during
-                                // parsing
-    detectedVersion = opfData.getVersion();
-    report.info(null, FeatureEnum.FORMAT_VERSION, detectedVersion.toString());
-    assert(detectedVersion != null);
-
-    if (context.version != EPUBVersion.Unknown && context.version != detectedVersion)
-    {
-      report.message(MessageId.PKG_001, EPUBLocation.create(opfPaths.get(0)), context.version,
-          detectedVersion);
-
-      validationVersion = context.version;
-    }
-    else
-    {
-      validationVersion = detectedVersion;
-    }
-    newContextBuilder.version(validationVersion);
-
-    //
-    // Compute the validation profile
-    // ------------------------------
-    EPUBProfile validationProfile = context.profile;
-    // FIXME get profile from metadata.xml if available
-    if (validationVersion == EPUBVersion.VERSION_2 && validationProfile != EPUBProfile.DEFAULT)
-    {
-      // Validation profile is unsupported for EPUB 2.0
-      report.message(MessageId.PKG_023, EPUBLocation.create(opfPaths.get(0)));
-    }
-    else if (validationVersion == EPUBVersion.VERSION_3)
-    {
-      // Override the given validation profile depending on the primary OPF
-      // dc:type
-      validationProfile = EPUBProfile.makeOPFCompatible(validationProfile, opfData, opfPaths.get(0),
-          report);
-    }
-    newContextBuilder.profile(validationProfile);
-
-    //
-    // Check multiple renditions
-    // ------------------------------
-    // EPUB 2.0 says there SHOULD be only one OPS rendition
-    if (validationVersion == EPUBVersion.VERSION_2 && opfPaths.size() > 1)
-    {
-      report.message(MessageId.PKG_013, EPUBLocation.create(OCFData.containerEntry));
-    }
-    // EPUB 3.0 Multiple Renditions recommends the presence of a metadata file
-    if (validationVersion == EPUBVersion.VERSION_3 && opfPaths.size() > 1)
-    {
-      newContextBuilder
-          .addProperty(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.MULTIPLE_RENDITION));
-      if (!ocf.hasEntry(OCFData.metadataEntry))
-      {
-        report.message(MessageId.RSC_019, EPUBLocation.create(ocf.getName()));
-      }
-      if (containerData.getMapping().isPresent())
-      {
-        validateRenditionMapping(new ValidationContextBuilder(newContextBuilder.build())
-            .mimetype("application/xhtml+xml").path(containerData.getMapping().get())
-            .addProperty(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.RENDITION_MAPPING))
-            .build());
-      }
-    }
+    ;
+    OCFContainer container = state.getContainer();
 
     //
     // Check the mimetype file
     // ------------------------------
     //
-    InputStream mimetype = null;
-    try
+    checkMimetypeFile(state);
+
+    //
+    // Check the container.xml file
+    // ----------------------------
+    //
+    if (!checkContainerFile(state))
     {
-      mimetype = ocf.getInputStream("mimetype");
-      StringBuilder sb = new StringBuilder(2048);
-      if (ocf.hasEntry("mimetype")
-          && !CheckUtil.checkTrailingSpaces(mimetype, validationVersion, sb))
+      return;
+    }
+    List<URL> packageDocs = state.getPackageDocuments();
+
+    //
+    // Check the declared package documents
+    // ------------------------------------
+    //
+    if (!checkDeclaredPackageDocuments(state))
+    {
+      return;
+    }
+
+    //
+    // Override the context-provided version and profile
+    // by what is actually declared in the publication
+    // -------------------------------------------------
+    EPUBVersion validationVersion = checkPublicationVersion(state);
+    state.setVersion(validationVersion);
+    state.setProfile(checkPublicationProfile(state, validationVersion));
+
+    //
+    // Check if there are multiple renditions
+    // --------------------------------------
+    // EPUB 2.0 says there SHOULD be only one OPS rendition
+    if (validationVersion == EPUBVersion.VERSION_2 && packageDocs.size() > 1)
+    {
+      report.message(MessageId.PKG_013, OCFMetaFile.CONTAINER.asLocation(container));
+    }
+    // EPUB 3.0 Multiple Renditions recommends the presence of a metadata file
+    if (validationVersion == EPUBVersion.VERSION_3 && packageDocs.size() > 1)
+    {
+      state.addProperty(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.MULTIPLE_RENDITION));
+      if (!OCFMetaFile.METADATA.isPresent(container))
       {
-        report.message(MessageId.PKG_007, EPUBLocation.create("mimetype"));
+        report.message(MessageId.RSC_019, EPUBLocation.of(context));
       }
-      if (sb.length() != 0)
+      if (state.getMappingDocument().isPresent())
       {
-        report.info(null, FeatureEnum.FORMAT_NAME, sb.toString().trim());
-      }
-    } catch (IOException ignored)
-    {
-      // missing file will be reported later
-    } finally
-    {
-      try
-      {
-        if (mimetype != null)
-        {
-          mimetype.close();
-        }
-      } catch (IOException ignored)
-      {
-        // eat it
+        new MappingDocumentChecker(
+            state.context().mimetype("application/xhtml+xml").url(state.getMappingDocument().get())
+                .addProperty(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.RENDITION_MAPPING))
+                .build()).check();
       }
     }
 
     //
-    // Check the META-INF files
+    // Check other META-INF files
     // ------------------------------
     //
-    validateMetaFiles(newContextBuilder.mimetype("xml").build());
+    checkEncryptionFile(state);
+    checkOtherMetaFiles(state);
+    container = state.getContainer();
 
     //
-    // Check each OPF (i.e. Rendition)
-    // -------------------------------
+    // Check each Publication (i.e. Package Document)
+    // ----------------------------------------------
     //
-    // Validate each OPF and keep a reference of the OPFHandler
     List<OPFHandler> opfHandlers = new LinkedList<OPFHandler>();
-    for (String opfPath : opfPaths)
+    for (URL packageDoc : packageDocs)
     {
-      OPFChecker opfChecker = OPFCheckerFactory.getInstance()
-          .newInstance(newContextBuilder.path(opfPath).mimetype(OPFData.OPF_MIME_TYPE)
-              .featureReport(new FeatureReport()).build());
-      opfChecker.runChecks();
-      opfHandlers.add(opfChecker.getOPFHandler());
+      ValidationContextBuilder opfContext = state.context().url(packageDoc)
+          .mimetype(MIMEType.PACKAGE_DOC.toString()).featureReport(new FeatureReport());
+
+      opfContext.container(container);
+      opfContext.pubTypes(state.getPublicationTypes(packageDoc));
+
+      Checker opfChecker = CheckerFactory.newChecker(opfContext.build());
+      assert opfChecker instanceof OPFChecker;
+      opfChecker.check();
+      opfHandlers.add(((OPFChecker) opfChecker).getOPFHandler());
     }
 
     //
-    // Check container integrity
-    // -------------------------------
+    // Check container consistency with Package Documents content
+    // ----------------------------------------------------------
     //
-    try
+
+    for (final URL resource : container.getResources())
     {
-      Set<String> entriesSet = new HashSet<String>();
-      Set<String> normalizedEntriesSet = new HashSet<String>();
-      for (final String entry : ocf.getFileEntries())
-      {
-        if (!entriesSet.add(entry.toLowerCase(Locale.ENGLISH)))
-        {
-          report.message(MessageId.OPF_060, EPUBLocation.create(ocf.getPackagePath()), entry);
-        }
-        else if (!normalizedEntriesSet.add(Normalizer.normalize(entry, Form.NFC)))
-        {
-          report.message(MessageId.OPF_061, EPUBLocation.create(ocf.getPackagePath()), entry);
-        }
+      String path = resource.path().substring(1);
+      // if the entry is not in the whitelist (META-INF/* + mimetype)
+      // and not declared in (one of) the OPF document(s)
 
-        ocf.reportMetadata(entry, report);
-
-        // if the entry is not in the whitelist (META-INF/* + mimetype)
-        // and not declared in (one of) the OPF document(s)
-        if (!entry.startsWith("META-INF/") && !entry.startsWith("META-INF\\")
-            && !entry.equals("mimetype") && !containerData.getEntries().contains(entry)
-            && !entry.equals(containerData.getMapping().orNull())
-            && !Iterables.tryFind(opfHandlers, new Predicate<OPFHandler>()
+      // FIXME 2022 add a method to register known files in state, to fix #1115
+      // (in this case, only the last mapping document is considered known)
+      if (!path.startsWith("META-INF/") && !path.startsWith("META-INF\\")
+          && !path.equals("mimetype") && !state.isDeclared(resource)
+          && !Iterables.tryFind(opfHandlers, new Predicate<OPFHandler>()
+          {
+            @Override
+            public boolean apply(OPFHandler opfHandler)
             {
-              @Override
-              public boolean apply(OPFHandler opfHandler)
-              {
-                // found if declared as an OPF item
-                // or in an EPUB 3 link element
-                return opfHandler.getItemByPath(entry).isPresent()
-                    || (validationVersion == EPUBVersion.VERSION_3
-                        && ((OPFHandler30) opfHandler).getLinkedResources().hasPath(entry));
-              }
-            }).isPresent())
-        {
-          report.message(MessageId.OPF_003, EPUBLocation.create(ocf.getName()), entry);
-        }
-        OCFFilenameChecker.checkCompatiblyEscaped(entry, report, validationVersion);
+              // found if declared as an OPF item
+              // or in an EPUB 3 link element
+              return opfHandler.getItemByURL(resource).isPresent()
+                  || (validationVersion == EPUBVersion.VERSION_3
+                      && ((OPFHandler30) opfHandler).getLinkedResources().hasResource(resource));
+            }
+          }).isPresent())
+      {
+        report.message(MessageId.OPF_003, EPUBLocation.of(context), path);
       }
 
-      for (String directory : ocf.getDirectoryEntries())
+      // check obfuscated resource are Font Core Media Types
+      if (state.isObfuscated(resource))
+      {
+        for (OPFHandler opf : opfHandlers)
+        {
+          // try to find the first Package Document where the entry is
+          // declared
+          Optional<OPFItem> item = opf.getItemByURL(resource);
+          if (item.isPresent())
+          {
+            // report if it is not a font core media type
+            if (!OPFChecker30.isBlessedFontType(item.get().getMimeType()))
+            {
+              report.message(MessageId.PKG_026, state.getObfuscationLocation(resource),
+                  item.get().getMimeType(), opf.getPath());
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    //
+    // Check other file properties
+    // ---------------------------
+    //
+    checkFileExtension(state);
+
+  }
+
+  private boolean checkContainerFile(OCFCheckerState state)
+  {
+    OCFContainer container = state.getContainer();
+    // Check the presence of the container file
+    // If absent, report and return early.
+    if (!OCFMetaFile.CONTAINER.isPresent(container))
+    {
+      // do not report the missing container entry if a fatal error was already
+      // reported
+      if (report.getFatalErrorCount() == 0)
+      {
+        report.message(MessageId.RSC_002, EPUBLocation.of(context));
+      }
+      return false;
+    }
+    // FIXME 2022 - report container info
+    // long l = container.getTimeEntry(OCFData.containerEntry);
+    // if (l > 0)
+    // {
+    // Date d = new Date(l);
+    // String formattedDate = new
+    // SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(d);
+    // report.info(OCFData.containerEntry, FeatureEnum.CREATION_DATE,
+    // formattedDate);
+    // }
+
+    ValidationContext containerFileContext = state.context()
+        .url(OCFMetaFile.CONTAINER.asURL(container)).mimetype("application/xml").build();
+    OCFContainerFileChecker containerFileChecker = new OCFContainerFileChecker(containerFileContext,
+        state);
+    containerFileChecker.check();
+    return true;
+  }
+
+  private boolean checkContainerStructure(OCFCheckerState state)
+  {
+    try
+    {
+      // FIXME 2022 build resourcesProvider depending on MIME type
+      // Get a container
+      Iterable<OCFResource> resourcesProvider = new OCFZipResources(context.url);
+      // Set to store the normalized paths for duplicate checks
+      final Set<String> normalizedPaths = new HashSet<>();
+      // Lists to store the container entries for later empty directory check
+      final List<String> filePaths = new LinkedList<>();
+      final List<String> directoryPaths = new LinkedList<>();
+
+      // Loop through the entries
+      for (OCFResource resource : resourcesProvider)
+      {
+        Preconditions.checkNotNull(resource.getPath());
+        Preconditions.checkNotNull(resource.getProperties());
+
+        // FIXME 2022 report symbolic links and continue
+
+        // Store the resource in the data structure
+        if (resource.isDirectory())
+        {
+          // the container resource is a directory,
+          // store its path for later checking of empty directories
+          directoryPaths.add(resource.getPath());
+        }
+        else
+        {
+          // The container resource is a file,
+          // store its path for later checking of empty directories
+          filePaths.add(resource.getPath());
+
+          // Check duplicate entries
+          String normalizedPath = UnicodeUtils.canonicalCaseFold(resource.getPath());
+          if (normalizedPaths.contains(normalizedPath))
+          {
+            context.report.message(MessageId.OPF_060, EPUBLocation.of(context), resource.getPath());
+          }
+          else
+          {
+            normalizedPaths.add(normalizedPath);
+          }
+
+          // Check file name requirements
+          new OCFFilenameChecker(resource.getPath(), state.context().build()).check();
+
+          // Report entry metadata
+          reportFeatures(resource);
+
+          // Add the resource to the container model
+          state.addResource(resource);
+        }
+      }
+
+      // Report empty directories
+      for (String directoryPath : directoryPaths)
       {
         boolean hasContents = false;
-        for (String file : ocf.getFileEntries())
+        for (String filePath : filePaths)
         {
-          if (file.startsWith(directory))
+          if (filePath.startsWith(directoryPath))
           {
             hasContents = true;
             break;
@@ -358,69 +339,226 @@ public class OCFChecker
         }
         if (!hasContents)
         {
-          report.message(MessageId.PKG_014, EPUBLocation.create(ocf.getName()), directory);
+          report.message(MessageId.PKG_014, EPUBLocation.of(context), directoryPath);
         }
       }
-    } catch (IOException e)
+      return true;
+    } catch (Exception e)
     {
-      report.message(MessageId.PKG_015, EPUBLocation.create(ocf.getName()), e.getMessage());
+      switch (e.getMessage())
+      {
+      case "invalid CEN header (bad entry name)": // reported by OpenJDK
+      case "MALFORMED": // reported by Oracle JDK 1.8
+        report.message(MessageId.PKG_027, EPUBLocation.of(context), e.getLocalizedMessage());
+        break;
+      default:
+        report.message(MessageId.PKG_008, EPUBLocation.of(context), e.getLocalizedMessage());
+        break;
+      }
+      return false;
     }
   }
 
-  private boolean validateMetaFiles(ValidationContext context)
+  private boolean checkDeclaredPackageDocuments(OCFCheckerState state)
   {
-    // validate container
-    validateMetaFile(new ValidationContextBuilder(context).path(OCFData.containerEntry).build());
-
-    // Validate encryption.xml
-    if (ocf.hasEntry(OCFData.encryptionEntry))
+    List<URL> packageDocs = state.getPackageDocuments();
+    OCFContainer container = state.getContainer();
+    if (packageDocs.isEmpty())
     {
-      validateMetaFile(new ValidationContextBuilder(context).path(OCFData.encryptionEntry).build());
-      report.info(null, FeatureEnum.HAS_ENCRYPTION, OCFData.encryptionEntry);
-    }
-
-    // validate signatures.xml
-    if (ocf.hasEntry(OCFData.signatureEntry))
-    {
-      validateMetaFile(new ValidationContextBuilder(context).path(OCFData.signatureEntry).build());
-      report.info(null, FeatureEnum.HAS_SIGNATURES, OCFData.signatureEntry);
-    }
-
-    // validate signatures.xml
-    if (ocf.hasEntry(OCFData.metadataEntry))
-    {
-      validateMetaFile(new ValidationContextBuilder(context).path(OCFData.metadataEntry).build());
-    }
-
-    return false;
-  }
-
-  private void validateMetaFile(ValidationContext context)
-  {
-    XMLParser parser = new XMLParser(context);
-    if (context.path.equals(OCFData.encryptionEntry))
-    {
-      parser.addXMLHandler(new EncryptionHandler(ocf, parser));
+      report.message(MessageId.RSC_003, OCFMetaFile.CONTAINER.asLocation(container));
+      return false;
     }
     else
     {
-      parser.addXMLHandler(new OCFHandler(parser));
+      if (packageDocs.size() > 1)
+      {
+        report.info(null, FeatureEnum.EPUB_RENDITIONS_COUNT, Integer.toString(packageDocs.size()));
+      }
+      boolean isPrimary = true;
+      for (URL packageDoc : packageDocs)
+      {
+        if (!container.contains(packageDoc))
+        {
+          report.message(MessageId.OPF_002, OCFMetaFile.CONTAINER.asLocation(container),
+              packageDoc);
+          return false;
+        }
+
+        ValidationContext packageDocContext = state.context().url(packageDoc).mimetype("").build();
+        PackageDocumentPeeker peeker = new PackageDocumentPeeker(packageDocContext, state);
+        peeker.peek();
+        // FIXME 2022 find a better way to detect errors (notably for
+        // VERSION_NOT_FOUND)
+        if (!state.getError().isEmpty())
+        {
+
+          context.report.message(MessageId.OPF_001, EPUBLocation.of(packageDocContext),
+              state.getError());
+          if (isPrimary) return false;
+        }
+        else if (state.getPublicationVersion(packageDoc) == EPUBVersion.Unknown)
+        {
+          context.report.message(MessageId.OPF_001, EPUBLocation.of(packageDocContext),
+              InvalidVersionException.VERSION_NOT_FOUND);
+        }
+        isPrimary = false;
+      }
     }
-    for (XMLValidator validator : validatorMap.getValidators(context))
-    {
-      parser.addValidator(validator);
-    }
-    parser.process();
+    return true;
   }
 
-  private void validateRenditionMapping(ValidationContext context)
+  private void checkEncryptionFile(OCFCheckerState state)
   {
-    XMLParser parser = new XMLParser(context);
-    for (XMLValidator validator : validatorMap.getValidators(context))
+    OCFContainer container = state.getContainer();
+    if (OCFMetaFile.ENCRYPTION.isPresent(container))
     {
-      parser.addValidator(validator);
+      report.info(null, FeatureEnum.HAS_ENCRYPTION, OCFMetaFile.ENCRYPTION.asPath());
+      ValidationContext encryptionFileContext = state.context()
+          .url(OCFMetaFile.ENCRYPTION.asURL(container)).mimetype("application/xml").build();
+      OCFEncryptionFileChecker checker = new OCFEncryptionFileChecker(encryptionFileContext, state);
+      checker.check();
     }
-    parser.process();
+  }
+
+  private void checkZipFile()
+  {
+    File packageFile = new File(context.path);
+    // If the container is packaged (= not a directory):
+    if (packageFile.isFile())
+    {
+      new OCFZipChecker(context).check();
+    }
+  }
+
+  private void checkFileExtension(OCFCheckerState state)
+  {
+    File packageFile = new File(context.path);
+    // If the container is packaged (= not a directory):
+    if (packageFile.isFile())
+    {
+      new OCFExtensionChecker(state.context().build()).check();
+    }
+
+  }
+
+  private void checkMimetypeFile(OCFCheckerState state)
+  {
+    OCFContainer container = state.getContainer();
+    if (OCFMetaFile.MIMETYPE.isPresent(container))
+    {
+      try (InputStream is = container.openStream(OCFMetaFile.MIMETYPE.asURL(container)))
+      {
+        StringBuilder sb = new StringBuilder(2048);
+        // FIXME next check mimetype file content here
+        if (!CheckUtil.checkTrailingSpaces(is, sb))
+        {
+          report.message(MessageId.PKG_007, OCFMetaFile.MIMETYPE.asLocation(container));
+        }
+        if (sb.length() != 0)
+        {
+          report.info(null, FeatureEnum.FORMAT_NAME, sb.toString().trim());
+        }
+      } catch (IOException e)
+      {
+        // ignore, missing file is reported elsewhere.
+      }
+    }
+    else
+    {
+      // FIXME 2022 report missing mimetype file if not a ZIP
+      // FIXME 2022 check mimetype file content if not a ZIP
+    }
+  }
+
+  private void checkOtherMetaFiles(OCFCheckerState state)
+  {
+    assert state.getContainer() != null;
+
+    OCFContainer container = state.getContainer();
+    if (OCFMetaFile.CONTAINER.isPresent(container))
+    {
+      // Re-check container file for schema errors
+      // the previous parsing only peeked critical info
+      new OCFMetaFileChecker(state.context().url(OCFMetaFile.CONTAINER.asURL(container))
+          .mimetype("application/xml").build()).check();
+    }
+    if (OCFMetaFile.METADATA.isPresent(container))
+    {
+      new OCFMetaFileChecker(state.context().url(OCFMetaFile.METADATA.asURL(container))
+          .mimetype("application/xml").build()).check();
+    }
+    if (OCFMetaFile.SIGNATURES.isPresent(container))
+    {
+      new OCFMetaFileChecker(state.context().url(OCFMetaFile.SIGNATURES.asURL(container))
+          .mimetype("application/xml").build()).check();
+      report.info(null, FeatureEnum.HAS_SIGNATURES, OCFMetaFile.SIGNATURES.asPath());
+    }
+  }
+
+  private EPUBProfile checkPublicationProfile(OCFCheckerState state, EPUBVersion validationVersion)
+  {
+    assert state.getContainer() != null;
+    assert !state.getPackageDocuments().isEmpty();
+
+    switch (validationVersion)
+    {
+    case VERSION_2:
+      if (context.profile != EPUBProfile.DEFAULT)
+      {
+        // Validation profile is unsupported for EPUB 2.0
+        report.message(MessageId.PKG_023,
+            EPUBLocation.of(state.getPackageDocuments().get(0), state.getContainer()));
+      }
+      return EPUBProfile.DEFAULT;
+    case VERSION_3:
+
+      // Override the given validation profile depending on the dc:type
+      // declared in the package document
+      EPUBProfile checkedProfile = context.profile.makeTypeCompatible(state.getPublicationTypes());
+      if (checkedProfile != context.profile)
+      {
+        report.message(MessageId.OPF_064,
+            EPUBLocation.of(state.getPackageDocuments().get(0), state.getContainer()),
+            checkedProfile.matchingType(), checkedProfile);
+      }
+      return checkedProfile;
+
+    default:
+      throw new IllegalStateException();
+    }
+  }
+
+  private EPUBVersion checkPublicationVersion(OCFCheckerState state)
+  {
+    Preconditions.checkState(!state.getPackageDocuments().isEmpty());
+
+    // Detect the version of the first root file
+    // and compare with the asked version (if set)
+    Preconditions.checkState(state.getPublicationVersion().isPresent());
+    final EPUBVersion detectedVersion = state.getPublicationVersion().get();
+    report.info(null, FeatureEnum.FORMAT_VERSION, detectedVersion.toString());
+
+    if (context.version != detectedVersion && context.version != EPUBVersion.Unknown)
+    {
+      report.message(MessageId.PKG_001,
+          EPUBLocation.of(state.getPackageDocuments().get(0), state.getContainer()),
+          context.version, detectedVersion);
+
+      return context.version;
+    }
+    else
+    {
+      return detectedVersion;
+    }
+  }
+
+  private void reportFeatures(OCFResource resource)
+  {
+    for (FeatureEnum feature : resource.getProperties().keySet())
+    {
+//      report.info(context.path, feature, resource.getProperties().get(feature));
+      report.info(resource.getPath(), feature, resource.getProperties().get(feature));
+    }
   }
 
 }

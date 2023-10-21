@@ -22,36 +22,63 @@
 
 package com.adobe.epubcheck.opf;
 
-import static com.adobe.epubcheck.vocab.ForeignVocabs.*;
-import static com.adobe.epubcheck.vocab.PackageVocabs.*;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.DCTERMS_PREFIX;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.DCTERMS_URI;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.DCTERMS_VOCAB;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.MARC_PREFIX;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.MARC_URI;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.MARC_VOCAB;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.ONIX_PREFIX;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.ONIX_URI;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.ONIX_VOCAB;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.SCHEMA_PREFIX;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.SCHEMA_URI;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.SCHEMA_VOCAB;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.XSD_PREFIX;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.XSD_URI;
+import static com.adobe.epubcheck.vocab.ForeignVocabs.XSD_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.ITEMREF_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.ITEMREF_VOCAB_URI;
+import static com.adobe.epubcheck.vocab.PackageVocabs.ITEM_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.ITEM_VOCAB_URI;
+import static com.adobe.epubcheck.vocab.PackageVocabs.LINKREL_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.LINK_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.LINK_VOCAB_URI;
+import static com.adobe.epubcheck.vocab.PackageVocabs.META_VOCAB;
+import static com.adobe.epubcheck.vocab.PackageVocabs.META_VOCAB_CAMEL;
+import static com.adobe.epubcheck.vocab.PackageVocabs.META_VOCAB_URI;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.Deque;
+import java.util.IllformedLocaleException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import org.w3c.epubcheck.core.references.Reference;
+import org.w3c.epubcheck.util.url.URLUtils;
+
 import com.adobe.epubcheck.api.EPUBLocation;
 import com.adobe.epubcheck.api.QuietReport;
+import com.adobe.epubcheck.messages.LocalizedMessages;
 import com.adobe.epubcheck.messages.MessageId;
+import com.adobe.epubcheck.opf.MetadataSet.Metadata;
 import com.adobe.epubcheck.opf.ResourceCollection.Roles;
-import com.adobe.epubcheck.opf.XRefChecker.Type;
 import com.adobe.epubcheck.util.EpubConstants;
 import com.adobe.epubcheck.util.FeatureEnum;
-import com.adobe.epubcheck.util.PathUtil;
+import com.adobe.epubcheck.vocab.AccessibilityVocab;
+import com.adobe.epubcheck.vocab.AggregateVocab;
 import com.adobe.epubcheck.vocab.DCMESVocab;
-import com.adobe.epubcheck.vocab.EnumVocab;
 import com.adobe.epubcheck.vocab.EpubCheckVocab;
 import com.adobe.epubcheck.vocab.MediaOverlaysVocab;
 import com.adobe.epubcheck.vocab.PackageVocabs.ITEM_PROPERTIES;
+import com.adobe.epubcheck.vocab.PackageVocabs.LINKREL_PROPERTIES;
 import com.adobe.epubcheck.vocab.Property;
 import com.adobe.epubcheck.vocab.RenditionVocabs;
 import com.adobe.epubcheck.vocab.ScriptedCompVocab;
 import com.adobe.epubcheck.vocab.Vocab;
 import com.adobe.epubcheck.vocab.VocabUtil;
-import com.adobe.epubcheck.xml.XMLElement;
-import com.adobe.epubcheck.xml.XMLParser;
+import com.adobe.epubcheck.xml.model.XMLElement;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
@@ -60,6 +87,9 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
+import io.mola.galimatias.GalimatiasParseException;
+import io.mola.galimatias.URL;
+
 public class OPFHandler30 extends OPFHandler
 {
 
@@ -67,9 +97,10 @@ public class OPFHandler30 extends OPFHandler
       .put(DCTERMS_PREFIX, DCTERMS_VOCAB).put(MARC_PREFIX, MARC_VOCAB).put(ONIX_PREFIX, ONIX_VOCAB)
       .put(SCHEMA_PREFIX, SCHEMA_VOCAB).put(XSD_PREFIX, XSD_VOCAB).build();
   private static final Map<String, Vocab> RESERVED_META_VOCABS = new ImmutableMap.Builder<String, Vocab>()
-      .put("", META_VOCAB).put(MediaOverlaysVocab.PREFIX, MediaOverlaysVocab.VOCAB)
-      .put(RenditionVocabs.PREFIX, RenditionVocabs.META_VOCAB)
-      .put(ScriptedCompVocab.PREFIX, ScriptedCompVocab.VOCAB).putAll(RESERVED_VOCABS).build();
+      .put("", AggregateVocab.of(META_VOCAB, META_VOCAB_CAMEL))
+      .put(AccessibilityVocab.PREFIX, AccessibilityVocab.META_VOCAB)
+      .put(MediaOverlaysVocab.PREFIX, MediaOverlaysVocab.VOCAB)
+      .put(RenditionVocabs.PREFIX, RenditionVocabs.META_VOCAB).putAll(RESERVED_VOCABS).build();
   private static final Map<String, Vocab> RESERVED_ITEM_VOCABS = new ImmutableMap.Builder<String, Vocab>()
       .put("", ITEM_VOCAB).put(MediaOverlaysVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
       .put(RenditionVocabs.PREFIX, VocabUtil.EMPTY_VOCAB).putAll(RESERVED_VOCABS).build();
@@ -77,33 +108,51 @@ public class OPFHandler30 extends OPFHandler
       .put("", ITEMREF_VOCAB).put(MediaOverlaysVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
       .put(RenditionVocabs.PREFIX, RenditionVocabs.ITEMREF_VOCAB).putAll(RESERVED_VOCABS).build();
   private static final Map<String, Vocab> RESERVED_LINKREL_VOCABS = new ImmutableMap.Builder<String, Vocab>()
-      .put("", LINKREL_VOCAB).put(MediaOverlaysVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
+      .put("", LINKREL_VOCAB).put(AccessibilityVocab.PREFIX, AccessibilityVocab.LINKREL_VOCAB)
+      .put(MediaOverlaysVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
+      .put(RenditionVocabs.PREFIX, VocabUtil.EMPTY_VOCAB).putAll(RESERVED_VOCABS).build();
+  private static final Map<String, Vocab> RESERVED_LINK_VOCABS = new ImmutableMap.Builder<String, Vocab>()
+      .put("", LINK_VOCAB).put(AccessibilityVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
+      .put(MediaOverlaysVocab.PREFIX, VocabUtil.EMPTY_VOCAB)
       .put(RenditionVocabs.PREFIX, VocabUtil.EMPTY_VOCAB).putAll(RESERVED_VOCABS).build();
 
   private static final Map<String, Vocab> KNOWN_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
       .put(DCTERMS_URI, DCTERMS_VOCAB).put(MARC_URI, MARC_VOCAB).put(ONIX_URI, ONIX_VOCAB)
       .put(SCHEMA_URI, SCHEMA_VOCAB).put(XSD_URI, XSD_VOCAB).build();
   private static final Map<String, Vocab> KNOWN_META_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
-      .putAll(KNOWN_VOCAB_URIS).put(MediaOverlaysVocab.URI, MediaOverlaysVocab.VOCAB)
-      .put(RenditionVocabs.URI, RenditionVocabs.META_VOCAB).build();
+      .putAll(KNOWN_VOCAB_URIS).put(AccessibilityVocab.URI, AccessibilityVocab.META_VOCAB)
+      .put(MediaOverlaysVocab.URI, MediaOverlaysVocab.VOCAB)
+      .put(RenditionVocabs.URI, RenditionVocabs.META_VOCAB)
+      .put(ScriptedCompVocab.URI, ScriptedCompVocab.VOCAB).build();
   private static final Map<String, Vocab> KNOWN_ITEM_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
-      .putAll(KNOWN_VOCAB_URIS).put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
-      .put(RenditionVocabs.URI, VocabUtil.EMPTY_VOCAB).build();
+      .putAll(KNOWN_VOCAB_URIS).put(AccessibilityVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(RenditionVocabs.URI, VocabUtil.EMPTY_VOCAB)
+      .put(ScriptedCompVocab.URI, VocabUtil.EMPTY_VOCAB).build();
   private static final Map<String, Vocab> KNOWN_ITEMREF_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
-      .putAll(KNOWN_VOCAB_URIS).put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .putAll(KNOWN_VOCAB_URIS).put(AccessibilityVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
       .put(RenditionVocabs.URI, RenditionVocabs.ITEMREF_VOCAB).build();
+  private static final Map<String, Vocab> KNOWN_LINK_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
+      .putAll(KNOWN_VOCAB_URIS).put(AccessibilityVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(RenditionVocabs.URI, VocabUtil.EMPTY_VOCAB)
+      .put(ScriptedCompVocab.URI, VocabUtil.EMPTY_VOCAB).build();
   private static final Map<String, Vocab> KNOWN_LINKREL_VOCAB_URIS = new ImmutableMap.Builder<String, Vocab>()
-      .putAll(KNOWN_VOCAB_URIS).put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
-      .put(RenditionVocabs.URI, VocabUtil.EMPTY_VOCAB).build();
+      .putAll(KNOWN_VOCAB_URIS).put(AccessibilityVocab.URI, AccessibilityVocab.LINKREL_VOCAB)
+      .put(MediaOverlaysVocab.URI, VocabUtil.EMPTY_VOCAB)
+      .put(RenditionVocabs.URI, VocabUtil.EMPTY_VOCAB)
+      .put(ScriptedCompVocab.URI, VocabUtil.EMPTY_VOCAB).build();
 
-  private static final Set<String> DEFAULT_VOCAB_URIS = ImmutableSet.of(PACKAGE_VOCAB_URI,
-      LINKREL_VOCAB_URI);
+  private static final Set<String> DEFAULT_VOCAB_URIS = ImmutableSet.of(ITEM_VOCAB_URI,
+      ITEMREF_VOCAB_URI, META_VOCAB_URI, LINK_VOCAB_URI);
 
   private static final Splitter TOKENIZER = Splitter.onPattern("\\s+");
 
   private Map<String, Vocab> itemrefVocabs;
   private Map<String, Vocab> itemVocabs;
   private Map<String, Vocab> metaVocabs;
+  private Map<String, Vocab> linkVocabs;
   private Map<String, Vocab> linkrelVocabs;
   private final Deque<MetadataSet.Builder> metadataBuilders = Lists.newLinkedList();
   private MetadataSet metadata = null;
@@ -113,9 +162,9 @@ public class OPFHandler30 extends OPFHandler
   private final ResourceCollections.Builder collectionsBuilder = ResourceCollections.builder();
   private ResourceCollections collections = null;
 
-  OPFHandler30(ValidationContext context, XMLParser parser)
+  OPFHandler30(ValidationContext context)
   {
-    super(context, parser);
+    super(context);
   }
 
   @Override
@@ -123,8 +172,15 @@ public class OPFHandler30 extends OPFHandler
   {
     super.startElement();
 
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String name = e.getName();
+
+    // Check global attributes
+    String xmllang = e.getAttributeNS(EpubConstants.XmlNamespaceUri, "lang");
+    if (xmllang != null && !xmllang.isEmpty())
+    {
+      checkLanguageTag(xmllang);
+    }
 
     if (EpubConstants.OpfNamespaceUri.equals(e.getNamespace()))
     {
@@ -140,8 +196,7 @@ public class OPFHandler30 extends OPFHandler
         // is
         // used for subsequent invocations.
         String prefixDecl = e.getAttribute("prefix");
-        EPUBLocation loc = EPUBLocation.create(path, parser.getLineNumber(),
-            parser.getColumnNumber());
+        EPUBLocation loc = location();
         metaVocabs = VocabUtil.parsePrefixDeclaration(prefixDecl, RESERVED_META_VOCABS,
             KNOWN_META_VOCAB_URIS, DEFAULT_VOCAB_URIS, report, loc);
         itemVocabs = VocabUtil.parsePrefixDeclaration(prefixDecl, RESERVED_ITEM_VOCABS,
@@ -150,6 +205,8 @@ public class OPFHandler30 extends OPFHandler
             KNOWN_ITEMREF_VOCAB_URIS, DEFAULT_VOCAB_URIS, QuietReport.INSTANCE, loc);
         linkrelVocabs = VocabUtil.parsePrefixDeclaration(prefixDecl, RESERVED_LINKREL_VOCABS,
             KNOWN_LINKREL_VOCAB_URIS, DEFAULT_VOCAB_URIS, QuietReport.INSTANCE, loc);
+        linkVocabs = VocabUtil.parsePrefixDeclaration(prefixDecl, RESERVED_LINK_VOCABS,
+            KNOWN_LINK_VOCAB_URIS, DEFAULT_VOCAB_URIS, QuietReport.INSTANCE, loc);
       }
       else if (name.equals("metadata"))
       {
@@ -158,7 +215,7 @@ public class OPFHandler30 extends OPFHandler
       }
       else if (name.equals("link"))
       {
-        processLink(e);
+        processLink();
       }
       else if (name.equals("item"))
       {
@@ -180,10 +237,6 @@ public class OPFHandler30 extends OPFHandler
           processItemrefProperties(itemBuilder, e.getAttribute("properties"));
         }
       }
-      else if (name.equals("mediaType"))
-      {
-        processBinding(e);
-      }
       else if (name.equals("collection"))
       {
         collectionBuilders.addFirst(
@@ -197,7 +250,7 @@ public class OPFHandler30 extends OPFHandler
   public void endElement()
   {
 
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String name = e.getName();
     if (EpubConstants.OpfNamespaceUri.equals(e.getNamespace()))
     {
@@ -211,7 +264,7 @@ public class OPFHandler30 extends OPFHandler
       }
       else if (name.equals("meta"))
       {
-        processMeta(e);
+        processMeta();
       }
       else if (name.equals("metadata"))
       {
@@ -225,8 +278,7 @@ public class OPFHandler30 extends OPFHandler
           if (!metadataBuilders.isEmpty()) metadata = metadataBuilders.removeFirst().build();
         } catch (IllegalStateException ex)
         {
-          report.message(MessageId.OPF_065,
-              EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+          report.message(MessageId.OPF_065, location());
         }
         // Build linked resources declared in this metadata element
         LinkedResources linkedResources = (linkedResourcesBuilders.isEmpty()) ? null
@@ -274,7 +326,7 @@ public class OPFHandler30 extends OPFHandler
     }
     else if (EpubConstants.DCElements.equals(e.getNamespace()))
     {
-      processDCElem(e);
+      processDCElem();
     }
 
     super.endElement();
@@ -285,7 +337,7 @@ public class OPFHandler30 extends OPFHandler
    * Document. Must be called after the parsing.
    * 
    * @return the metadata for the Rendition represented by the current Package
-   *         Document
+   *           Document
    */
   public MetadataSet getMetadata()
   {
@@ -299,7 +351,7 @@ public class OPFHandler30 extends OPFHandler
    * called after the parsing.
    * 
    * @return the linked resources for the Rendition represented by the current
-   *         Package Document
+   *           Package Document
    */
   public LinkedResources getLinkedResources()
   {
@@ -312,41 +364,11 @@ public class OPFHandler30 extends OPFHandler
    * the parsing.
    * 
    * @return the linked resources for the Rendition represented by the current
-   *         Package Document
+   *           Package Document
    */
   public ResourceCollections getCollections()
   {
     return (collections == null) ? ResourceCollections.builder().build() : collections;
-  }
-
-  private void processBinding(XMLElement e)
-  {
-    String mimeType = e.getAttribute("media-type");
-    String handlerId = e.getAttribute("handler");
-
-    if ((mimeType != null) && (handlerId != null))
-    {
-      if (OPFChecker30.isCoreMediaType(mimeType))
-      {
-        report.message(MessageId.OPF_008,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()), mimeType);
-        return;
-      }
-
-      if (context.xrefChecker.isPresent()
-          && context.xrefChecker.get().getBindingHandlerId(mimeType) != null)
-      {
-        report.message(MessageId.OPF_009,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()), mimeType,
-            context.xrefChecker.get().getBindingHandlerId(mimeType));
-        return;
-      }
-
-      if (itemBuilders.containsKey(handlerId) && context.xrefChecker.isPresent())
-      {
-        context.xrefChecker.get().registerBinding(mimeType, handlerId);
-      }
-    }
   }
 
   private List<String> processCollectionRole(String roleAtt)
@@ -354,87 +376,116 @@ public class OPFHandler30 extends OPFHandler
     ImmutableList.Builder<String> rolesBuilder = ImmutableList.builder();
     for (String role : TOKENIZER.split(Strings.nullToEmpty(roleAtt)))
     {
-      if (role.matches("^[^:/?#]+://.*"))
+      if (URLUtils.isAbsoluteURLString(role))
       {
         // Role is an absolute IRI
-        // check that the host component doesn't contain 'idpf.org'
         try
         {
-          URI uri = new URI(role);
-          if (uri.getHost() != null && uri.getHost().contains("idpf.org"))
-          {
-            report.message(MessageId.OPF_069, parser.getLocation(), role);
-          }
-          else
-          {
-            rolesBuilder.add(role);
-          }
-        } catch (URISyntaxException e)
+          URL.parse(role);
+        } catch (GalimatiasParseException e)
         {
-          report.message(MessageId.OPF_070, parser.getLocation(), role);
+          report.message(MessageId.OPF_070, location(), role);
+          break;
         }
       }
-      else
-      {
-        // Role is a NMTOKEN
-        // Check that it's in the reserved role list
-        if (ResourceCollection.Roles.fromString(role).isPresent())
-        {
-          rolesBuilder.add(role);
-        }
-        else
-        {
-          report.message(MessageId.OPF_068, parser.getLocation(), role);
-        }
-      }
+      rolesBuilder.add(role);
     }
     return rolesBuilder.build();
   }
 
-  private void processLink(XMLElement e)
+  private void processLink()
   {
+    XMLElement e = currentElement();
+
+    // check the 'href' URL
+    // href presence is checked by schema
     String href = e.getAttribute("href");
-    if (href != null && !href.matches("^[^:/?#]+://.*"))
+    URL url = checkURL(href);
+    if (url != null)
     {
-      try
+      // Data URLs are not allowed on `link` elements
+      if ("data".equals(url.scheme()))
       {
-        href = PathUtil.resolveRelativeReference(path, href, null);
-      } catch (IllegalArgumentException ex)
+        report.message(MessageId.RSC_029, location());
+        return;
+      }
+      // The `href` attribute MUST not reference resources via elements
+      // in the package document itself
+      if (url.fragment() != null && !url.fragment().isEmpty()
+          && URLUtils.docURL(url).equals(context.url))
       {
-        report.message(MessageId.OPF_010,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), href),
-            ex.getMessage());
-        href = null;
+        report.message(MessageId.OPF_098, location(), href);
+        return;
+      }
+
+      if (context.isRemote(url))
+      {
+        report.info(path, FeatureEnum.REFERENCE, href);
+      }
+      registerReference(url, Reference.Type.LINK);
+
+      // check the 'rel' attribute
+      String rel = e.getAttribute("rel");
+      Set<Property> relSet = processLinkRel(rel);
+      Set<LINKREL_PROPERTIES> relEnum = Property.filter(relSet, LINKREL_PROPERTIES.class);
+
+      // check the 'media-type' attribute
+      String mediatype = e.getAttribute("media-type");
+      if (mediatype == null)
+      {
+        // media-type is required for in-container URLs
+        // NOTE: as legacy EPUB 3.2 collections made heavy use
+        // of local links with no media type, we only check this
+        // for metadata links, which may be a violation of EPUB.
+        if (!context.isRemote(url) && !metadataBuilders.isEmpty())
+        {
+          if (linkedResourcesBuilders.size() == 1)
+            report.message(MessageId.OPF_093, location());
+        }
+        // media-type is required by some keywords
+        else if (relEnum.stream().anyMatch(
+            keyword -> keyword == LINKREL_PROPERTIES.RECORD
+                || keyword == LINKREL_PROPERTIES.VOICING))
+        {
+          report.message(MessageId.OPF_094, location(), rel);
+        }
+      }
+      else
+      {
+        // 'voicing' links require an audio media type
+        if (relEnum.contains(LINKREL_PROPERTIES.VOICING) && !OPFChecker30.isAudioType(mediatype))
+        {
+          report.message(MessageId.OPF_095, location(), mediatype);
+        }
+      }
+
+      // check the 'properties' attribute
+      processLinkProperties(e.getAttribute("properties"));
+
+      // build the data model
+      if (!linkedResourcesBuilders.isEmpty())
+      {
+        LinkedResource resource = new LinkedResource.Builder(url).id(e.getAttribute("id"))
+            .rel(relSet).mimetype(mediatype).refines(e.getAttribute("refines")).build();
+        linkedResourcesBuilders.peekFirst().add(resource);
       }
     }
-    if (href != null && href.matches("^[^:/?#]+://.*"))
-    {
-      report.info(path, FeatureEnum.REFERENCE, href);
-    }
 
-    if (context.xrefChecker.isPresent())
+    // check hreflang attribute
+    String hreflang = e.getAttribute("hreflang");
+    if (hreflang != null && !hreflang.isEmpty())
     {
-      context.xrefChecker.get().registerReference(path, parser.getLineNumber(),
-          parser.getColumnNumber(), href, Type.LINK);
-    }
-
-    if (!linkedResourcesBuilders.isEmpty())
-    {
-      LinkedResource resource = new LinkedResource.Builder(href).id(e.getAttribute("id"))
-          .rel(processLinkRel(e.getAttribute("rel"))).mimetype(e.getAttribute("media-type"))
-          .refines(e.getAttribute("refines")).build();
-      linkedResourcesBuilders.peekFirst().add(resource);
+      checkLanguageTag(hreflang);
     }
   }
 
   private void processItemrefProperties(OPFItem.Builder builder, String property)
   {
-    Set<Property> properties = VocabUtil.parsePropertyList(property, itemrefVocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    Set<Property> properties = VocabUtil.parsePropertyList(property, itemrefVocabs, context,
+        location());
     builder.properties(properties);
-    if (properties
-        .contains(RenditionVocabs.ITEMREF_VOCAB
-            .get(RenditionVocabs.ITEMREF_PROPERTIES.LAYOUT_PRE_PAGINATED))
+    if (properties.contains(
+        RenditionVocabs.ITEMREF_VOCAB.get(RenditionVocabs.ITEMREF_PROPERTIES.LAYOUT_PRE_PAGINATED))
         || !properties.contains(
             RenditionVocabs.ITEMREF_VOCAB.get(RenditionVocabs.ITEMREF_PROPERTIES.LAYOUT_REFLOWABLE))
             && getMetadata().containsPrimary(
@@ -465,54 +516,102 @@ public class OPFHandler30 extends OPFHandler
       return;
     }
 
-    Set<Property> properties = VocabUtil.parsePropertyList(property, itemVocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    Set<Property> properties = VocabUtil.parsePropertyList(property, itemVocabs, context,
+        location());
     Set<ITEM_PROPERTIES> itemProps = Property.filter(properties, ITEM_PROPERTIES.class);
 
     mimeType = mimeType.trim();
     for (ITEM_PROPERTIES itemProp : itemProps)
     {
-      if (!itemProp.allowedOnTypes().contains(mimeType))
+      if (!itemProp.isAllowedForType(mimeType))
       {
-        report.message(MessageId.OPF_012,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()),
-            EnumVocab.ENUM_TO_NAME.apply(itemProp), mimeType);
+        report.message(MessageId.OPF_012, location(), ITEM_VOCAB.getName(itemProp), mimeType);
       }
     }
     builder.properties(properties);
   }
 
-  private Set<Property> processLinkRel(String rel)
+  private Set<Property> processLinkProperties(String properties)
   {
-    return VocabUtil.parsePropertyList(rel, linkrelVocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    return VocabUtil.parsePropertyList(properties, linkVocabs, context, location());
   }
 
-  private void processMeta(XMLElement e)
+  private Set<Property> processLinkRel(String rel)
   {
+    Set<Property> linkRelProperties = VocabUtil.parsePropertyList(rel, linkrelVocabs, context,
+        location());
+    if (Property.filter(linkRelProperties, LINKREL_PROPERTIES.class)
+        .contains(LINKREL_PROPERTIES.ALTERNATE) && linkRelProperties.size() > 1)
+    {
+      report.message(MessageId.OPF_089, location());
+    }
+    return linkRelProperties;
+  }
+
+  private void processMeta()
+  {
+    XMLElement e = currentElement();
     // get the property
     Optional<Property> prop = VocabUtil.parseProperty(e.getAttribute("property"), metaVocabs,
-        report, EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+        context, location());
 
     if (prop.isPresent() && !metadataBuilders.isEmpty())
     {
+      String value = Strings.nullToEmpty((String) e.getPrivateData(TEXT)).trim();
       metadataBuilders.peekFirst().meta(e.getAttribute("id"), prop.get(),
-          (String) e.getPrivateData(), e.getAttribute("refines"));
+          value, e.getAttribute("refines"));
+
+      // Primary metadata checks
+      if (metadataBuilders.size() == 1)
+      {
+        switch (prop.get().getPrefixedName())
+        {
+        case "media:active-class":
+          context.featureReport.report(FeatureEnum.MEDIA_OVERLAYS_ACTIVE_CLASS, location(),
+              e.getPrivateData().toString());
+          break;
+        case "media:playback-active-class":
+          context.featureReport.report(FeatureEnum.MEDIA_OVERLAYS_PLAYBACK_ACTIVE_CLASS, location(),
+              e.getPrivateData().toString());
+          break;
+        case "rendition:spread":
+          if (value.equals("portrait"))
+          {
+            report.message(MessageId.OPF_086, location(), "rendition:spread portrait",
+                LocalizedMessages.getInstance(context.locale)
+                    .getSuggestion(MessageId.OPF_086, null));
+          }
+          break;
+        default:
+          break;
+        }
+      }
     }
 
     // just parse the scheme for vocab errors
-    VocabUtil.parseProperty(e.getAttribute("scheme"), metaVocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    VocabUtil.parseProperty(e.getAttribute("scheme"), metaVocabs, context, location());
   }
 
-  private void processDCElem(XMLElement e)
+  private void processDCElem()
   {
+    XMLElement e = currentElement();
     // get the property
     Optional<Property> prop = DCMESVocab.VOCAB.lookup(e.getName());
+    // Add to the metadata model builder
     if (prop.isPresent() && !metadataBuilders.isEmpty())
     {
       metadataBuilders.peekFirst().meta(e.getAttribute("id"), prop.get(),
-          (String) e.getPrivateData(), null);
+          (String) e.getPrivateData(TEXT), null);
+    }
+    // Check that dc:language is well-formed
+    if ("language".equals(e.getName()))
+    {
+      String language = (String) e.getPrivateData(TEXT);
+      // Empty dc:language is checked by the schema
+      if (language != null && !language.trim().isEmpty())
+      {
+        checkLanguageTag(language.trim());
+      }
     }
   }
 
@@ -522,7 +621,7 @@ public class OPFHandler30 extends OPFHandler
     {
       for (LinkedResource resource : collection.getResources().asList())
       {
-        OPFItem.Builder itemBuilder = itemBuildersByPath.get(resource.getPath());
+        OPFItem.Builder itemBuilder = itemBuildersByURL.get(resource.getDocumentURL());
         if (itemBuilder != null)
         {
           itemBuilder.properties(ImmutableSet
@@ -536,12 +635,41 @@ public class OPFHandler30 extends OPFHandler
     }
   }
 
+  private void checkLanguageTag(String language)
+  {
+    try
+    {
+      new Locale.Builder().setLanguageTag(language);
+    } catch (IllformedLocaleException exception)
+    {
+      report.message(MessageId.OPF_092, location(), language, exception.getMessage());
+    }
+  }
+
   protected void reportMetadata()
   {
+    // Report publication rendition layout
     if (getMetadata().containsPrimary(
         RenditionVocabs.META_VOCAB.get(RenditionVocabs.META_PROPERTIES.LAYOUT), "pre-paginated"))
     {
-      report.info(null, FeatureEnum.HAS_FIXED_LAYOUT, "pre-paginated");
+      report.info(null, FeatureEnum.RENDITION_LAYOUT, "pre-paginated");
+      report.info(null, FeatureEnum.HAS_FIXED_LAYOUT, "true");
+    }
+    // Report publication rendition orientation (if set)
+    Optional<Metadata> orientation = MetadataSet.tryFind(getMetadata().getAll(),
+        RenditionVocabs.META_VOCAB.get(RenditionVocabs.META_PROPERTIES.ORIENTATION),
+        Optional.absent());
+    if (orientation.isPresent())
+    {
+      report.info(null, FeatureEnum.RENDITION_ORIENTATION, orientation.get().getValue());
+    }
+    // Report publication rendition spread (if set)
+    Optional<Metadata> spread = MetadataSet.tryFind(getMetadata().getAll(),
+        RenditionVocabs.META_VOCAB.get(RenditionVocabs.META_PROPERTIES.SPREAD),
+        Optional.absent());
+    if (spread.isPresent())
+    {
+      report.info(null, FeatureEnum.RENDITION_SPREAD, spread.get().getValue());
     }
   }
 
@@ -549,21 +677,43 @@ public class OPFHandler30 extends OPFHandler
   protected void reportItem(OPFItem item)
   {
     super.reportItem(item);
-    boolean isFixed = getMetadata().containsPrimary(
-        RenditionVocabs.META_VOCAB.get(RenditionVocabs.META_PROPERTIES.LAYOUT), "pre-paginated");
-    if (item.getProperties().contains(
-        RenditionVocabs.ITEMREF_VOCAB.get(RenditionVocabs.ITEMREF_PROPERTIES.LAYOUT_PRE_PAGINATED)))
+
+    // Report rendition properties overrides
+    Set<RenditionVocabs.ITEMREF_PROPERTIES> properties = Property.filter(item.getProperties(),
+        RenditionVocabs.ITEMREF_PROPERTIES.class);
+    for (RenditionVocabs.ITEMREF_PROPERTIES property : properties)
     {
-      isFixed = true;
-    }
-    else if (item.getProperties().contains(
-        RenditionVocabs.ITEMREF_VOCAB.get(RenditionVocabs.ITEMREF_PROPERTIES.LAYOUT_REFLOWABLE)))
-    {
-      isFixed = false;
-    }
-    if (isFixed)
-    {
-      report.info(item.getPath(), FeatureEnum.HAS_FIXED_LAYOUT, String.valueOf(true));
+      switch (property)
+      {
+      // Rendition layout properties
+      case LAYOUT_PRE_PAGINATED:
+        report.info(item.getPath(), FeatureEnum.RENDITION_LAYOUT, "pre-paginated");
+        report.info(item.getPath(), FeatureEnum.HAS_FIXED_LAYOUT, "true");
+        break;
+      case LAYOUT_REFLOWABLE:
+        report.info(item.getPath(), FeatureEnum.RENDITION_LAYOUT, "reflowable");
+        report.info(item.getPath(), FeatureEnum.HAS_FIXED_LAYOUT, "false");
+        break;
+      // Orientation properties
+      case ORIENTATION_AUTO:
+      case ORIENTATION_LANDSCAPE:
+      case ORIENTATION_PORTRAIT:
+        report.info(item.getPath(), FeatureEnum.RENDITION_ORIENTATION,
+            property.name().substring(12).toLowerCase(Locale.ROOT));
+        break;
+      // Spread properties
+      case SPREAD_AUTO:
+      case SPREAD_BOTH:
+      case SPREAD_LANDSCAPE:
+      case SPREAD_NONE:
+      case SPREAD_PORTRAIT:
+        report.info(item.getPath(), FeatureEnum.RENDITION_SPREAD,
+            property.name().substring(7).toLowerCase(Locale.ROOT));
+        break;
+
+      default:
+        break;
+      }
     }
   }
 }

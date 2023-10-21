@@ -74,7 +74,7 @@ public class EpubCheckServlet extends HttpServlet {
 			File bookFile = File.createTempFile("work", "epub");
 			book.write(bookFile);
 			EpubCheck epubCheck = new EpubCheck(bookFile, out);
-			if( epubCheck.validate() )
+			if( epubCheck.checkForWeb() )
 				out.println("No errors or warnings detected");
 			book.delete();
 		} catch (Exception e) {

@@ -22,75 +22,60 @@
 
 package com.adobe.epubcheck.ncx;
 
+import org.w3c.epubcheck.core.references.Reference;
+
 import com.adobe.epubcheck.messages.MessageId;
-import com.adobe.epubcheck.opf.XRefChecker;
+import com.adobe.epubcheck.opf.ValidationContext;
 import com.adobe.epubcheck.util.FeatureEnum;
-import com.adobe.epubcheck.util.HandlerUtil;
-import com.adobe.epubcheck.util.PathUtil;
-import com.adobe.epubcheck.xml.XMLElement;
-import com.adobe.epubcheck.xml.XMLHandler;
-import com.adobe.epubcheck.xml.XMLParser;
+import com.adobe.epubcheck.xml.handlers.XMLHandler;
+import com.adobe.epubcheck.xml.model.XMLElement;
 
-public class NCXHandler implements XMLHandler
+import io.mola.galimatias.URL;
+
+public class NCXHandler extends XMLHandler
 {
-  private final XMLParser parser;
-  private final String path;
-  private final XRefChecker xrefChecker;
+  private static final String TEXT = "text"; 
   String uid;
-  boolean checkedUnsupportedXmlVersion = false;
 
-  NCXHandler(XMLParser parser, String path, XRefChecker xrefChecker)
+  public NCXHandler(ValidationContext context)
   {
-
-    this.parser = parser;
-    this.path = path;
-    this.xrefChecker = xrefChecker;
+    super(context);
   }
 
+  @Override
   public void characters(char[] chars, int start, int len)
   {
 
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String name = e.getName();
     String ns = e.getNamespace();
     boolean keepValue = ("http://www.daisy.org/z3986/2005/ncx/".equals(ns) && "text".equals(name));
     if (keepValue)
     {
-      String val = (String) e.getPrivateData();
+      String val = (String) e.getPrivateData(TEXT);
       String text = new String(chars, start, len);
-      e.setPrivateData((val == null) ? text : val + text);
+      e.setPrivateData(TEXT, (val == null) ? text : val + text);
     }
   }
 
-  public void ignorableWhitespace(char[] chars, int arg1, int arg2)
-  {
-  }
-
+  @Override
   public void startElement()
   {
-    if (!checkedUnsupportedXmlVersion)
-    {
-      HandlerUtil.checkXMLVersion(parser);
-      checkedUnsupportedXmlVersion = true;
-    }
-
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String ns = e.getNamespace();
     String name = e.getName();
     if (ns.equals("http://www.daisy.org/z3986/2005/ncx/"))
     {
       if ("content".equals(name))
       {
-        String href = e.getAttribute("src");
-        if (href != null)
+        URL srcURL = checkURL(e.getAttribute("src"));
+        if (srcURL != null)
         {
-          href = PathUtil.resolveRelativeReference(path, href, null);
-          if (href.startsWith("http:"))
+          if (context.isRemote(srcURL))
           {
-            parser.getReport().info(path, FeatureEnum.REFERENCE, href);
+            report.info(path, FeatureEnum.REFERENCE, srcURL.toString());
           }
-          xrefChecker.registerReference(path, parser.getLineNumber(), parser.getColumnNumber(),
-              href, XRefChecker.Type.HYPERLINK);
+          registerReference(srcURL, Reference.Type.HYPERLINK);
         }
       }
       else if ("meta".equals(name))
@@ -104,26 +89,23 @@ public class NCXHandler implements XMLHandler
     }
   }
 
+  @Override
   public void endElement()
   {
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String ns = e.getNamespace();
     String name = e.getName();
     if (ns.equals("http://www.daisy.org/z3986/2005/ncx/"))
     {
       if ("text".equals(name))
       {
-        String text = (String) e.getPrivateData();
+        String text = (String) e.getPrivateData(TEXT);
         if (text == null || text.trim().isEmpty())
         {
-          parser.getReport().message(MessageId.NCX_006, parser.getLocation());
+          report.message(MessageId.NCX_006, location());
         }
       }
     }
-  }
-
-  public void processingInstruction(String arg0, String arg1)
-  {
   }
 
   /**

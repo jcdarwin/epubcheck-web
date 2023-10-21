@@ -1,12 +1,25 @@
 package com.adobe.epubcheck.ops;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
+
+import org.w3c.epubcheck.constants.MIMEType;
+import org.w3c.epubcheck.core.references.Reference;
+import org.w3c.epubcheck.core.references.Reference.Type;
+import org.w3c.epubcheck.core.references.Resource;
+import org.w3c.epubcheck.util.microsyntax.ViewportMeta;
+import org.w3c.epubcheck.util.microsyntax.ViewportMeta.ParseError;
+import org.w3c.epubcheck.util.url.URLUtils;
 
 import com.adobe.epubcheck.api.EPUBLocation;
 import com.adobe.epubcheck.api.EPUBProfile;
@@ -14,48 +27,55 @@ import com.adobe.epubcheck.messages.MessageId;
 import com.adobe.epubcheck.opf.OPFChecker;
 import com.adobe.epubcheck.opf.OPFChecker30;
 import com.adobe.epubcheck.opf.ValidationContext;
-import com.adobe.epubcheck.opf.XRefChecker;
+import com.adobe.epubcheck.util.EPUBVersion;
 import com.adobe.epubcheck.util.EpubConstants;
 import com.adobe.epubcheck.util.FeatureEnum;
-import com.adobe.epubcheck.util.PathUtil;
+import com.adobe.epubcheck.util.SourceSet;
 import com.adobe.epubcheck.vocab.AggregateVocab;
 import com.adobe.epubcheck.vocab.AltStylesheetVocab;
 import com.adobe.epubcheck.vocab.ComicsVocab;
 import com.adobe.epubcheck.vocab.DataNavVocab;
 import com.adobe.epubcheck.vocab.DictVocab;
-import com.adobe.epubcheck.vocab.EnumVocab;
 import com.adobe.epubcheck.vocab.EpubCheckVocab;
+import com.adobe.epubcheck.vocab.ForeignVocabs;
 import com.adobe.epubcheck.vocab.IndexVocab;
+import com.adobe.epubcheck.vocab.MagazineNavigationVocab;
 import com.adobe.epubcheck.vocab.PackageVocabs;
 import com.adobe.epubcheck.vocab.PackageVocabs.ITEM_PROPERTIES;
 import com.adobe.epubcheck.vocab.Property;
 import com.adobe.epubcheck.vocab.StagingEdupubVocab;
 import com.adobe.epubcheck.vocab.StructureVocab;
 import com.adobe.epubcheck.vocab.StructureVocab.EPUB_TYPES;
+import com.adobe.epubcheck.vocab.UncheckedVocab;
 import com.adobe.epubcheck.vocab.Vocab;
 import com.adobe.epubcheck.vocab.VocabUtil;
-import com.adobe.epubcheck.xml.XMLAttribute;
-import com.adobe.epubcheck.xml.XMLElement;
-import com.adobe.epubcheck.xml.XMLParser;
+import com.adobe.epubcheck.xml.model.XMLAttribute;
+import com.adobe.epubcheck.xml.model.XMLElement;
 import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
-import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 
+import io.mola.galimatias.URL;
+
 public class OPSHandler30 extends OPSHandler
 {
-
-  private static final Pattern DATA_URI_PATTERN = Pattern.compile("^data:([^;]*)[^,]*,.*");
+  private static final String HAS_PALPABLE_CONTENT = "IS_PALPABLE";
 
   private static Map<String, Vocab> RESERVED_VOCABS = ImmutableMap.<String, Vocab> of("",
       AggregateVocab.of(StructureVocab.VOCAB, StagingEdupubVocab.VOCAB, DataNavVocab.VOCAB,
-          DictVocab.VOCAB, IndexVocab.VOCAB, ComicsVocab.VOCAB));
+          DictVocab.VOCAB, IndexVocab.VOCAB, ComicsVocab.VOCAB, StructureVocab.UNCHECKED_VOCAB),
+      MagazineNavigationVocab.PREFIX, MagazineNavigationVocab.VOCAB, ForeignVocabs.PRISM_PREFIX,
+      ForeignVocabs.PRISM_VOCAB);
   private static Map<String, Vocab> ALTCSS_VOCABS = ImmutableMap.<String, Vocab> of("",
-      AltStylesheetVocab.VOCAB);
-  private static Map<String, Vocab> KNOWN_VOCAB_URIS = ImmutableMap.of();
+      AggregateVocab.of(AltStylesheetVocab.VOCAB, new UncheckedVocab("", "")));
+  private static Map<String, Vocab> KNOWN_VOCAB_URIS = ImmutableMap.of(MagazineNavigationVocab.URI,
+      MagazineNavigationVocab.VOCAB, ForeignVocabs.PRISM_URI, ForeignVocabs.PRISM_VOCAB);
   private static Set<String> DEFAULT_VOCAB_URIS = ImmutableSet.of(StructureVocab.URI);
+
+  private static final Splitter TOKENIZER = Splitter.onPattern("\\s+").omitEmptyStrings();
 
   private Map<String, Vocab> vocabs = RESERVED_VOCABS;
 
@@ -64,20 +84,19 @@ public class OPSHandler30 extends OPSHandler
 
   private final boolean isLinear;
 
-  protected boolean inVideo = false;
-  protected boolean inAudio = false;
-  protected boolean hasValidFallback = false;
-
-  protected int imbricatedObjects = 0;
-  protected int imbricatedCanvases = 0;
+  protected boolean inPicture = false;
 
   protected boolean anchorNeedsText = false;
   protected boolean inMathML = false;
   protected boolean inSvg = false;
   protected boolean inBody = false;
   protected boolean inRegionBasedNav = false;
+  protected boolean isOutermostSVGAlreadyProcessed = false;
   protected boolean hasAltorAnnotation = false;
-  protected boolean hasTitle = false;
+  protected boolean hasLabel = false;
+  protected boolean hasListItem = false;
+  protected boolean hasViewport = false;
+  private Map<URL, String> mediaSources;
 
   static protected final String[] scriptEventsStrings = { "onafterprint", "onbeforeprint",
       "onbeforeunload", "onerror", "onhaschange", "onload", "onmessage", "onoffline", "onpagehide",
@@ -122,32 +141,112 @@ public class OPSHandler30 extends OPSHandler
     return mouseEvents;
   }
 
-  public OPSHandler30(ValidationContext context, XMLParser parser)
+  public OPSHandler30(ValidationContext context)
   {
-    super(context, parser);
-    checkedUnsupportedXMLVersion = false;
+    super(context);
     isLinear = !context.properties
         .contains(EpubCheckVocab.VOCAB.get(EpubCheckVocab.PROPERTIES.NON_LINEAR));
   }
 
-  protected void checkType(XMLElement e, String type)
+  @Override
+  protected void checkImage(String attrNS, String attr)
+  {
+    XMLElement e = currentElement();
+
+    // if it's an SVG image, just register the reference
+    if ("http://www.w3.org/2000/svg".equals(e.getNamespace()))
+    {
+      URL url = checkResourceURL(e.getAttributeNS(attrNS, attr));
+      registerReference(url, Reference.Type.IMAGE);
+    }
+    // else process image or image source sets in HTML
+    else
+    {
+      String src = e.getAttribute("src");
+      String srcset = e.getAttribute("srcset");
+
+      // compute a list of image URLs to register
+      Set<String> imageSources = new TreeSet<>();
+      if (src != null) imageSources.add(src);
+      imageSources.addAll(SourceSet.parse(srcset).getImageURLs());
+
+      // register all the URLs
+      for (String urlString : imageSources)
+      {
+        URL url = checkResourceURL(urlString);
+        if (url != null && context.referenceRegistry.isPresent())
+        {
+          Resource imageResource = context.resourceRegistry.get()
+              .getResource(URLUtils.docURL(url)).orElse(null);
+          // check picture-specific fallback rules
+          if (inPicture && imageResource != null)
+          {
+            String mimetype = imageResource.getMimeType();
+            URL imageURL = imageResource.getURL();
+            switch (e.getName())
+            {
+            case "img":
+              // an `img` child of `picture` MUST be a core media type resource
+              if (!OPFChecker.isBlessedImageType(mimetype, EPUBVersion.VERSION_3))
+              {
+                report.message(MessageId.MED_003, location(),
+                    context.relativize(imageURL), mimetype);
+              }
+              break;
+            case "source":
+              // a `source` child of `picture` MUST be core media type resource
+              // or have a `type` attribute
+              String type = Strings.nullToEmpty(e.getAttribute("type")).trim();
+              if (type.isEmpty() && !OPFChecker.isBlessedImageType(mimetype, EPUBVersion.VERSION_3))
+              {
+                report.message(MessageId.MED_007, location(),
+                    context.relativize(imageURL), mimetype);
+              }
+              else
+              {
+                // warn about HTML-declared/EPUB-declared type mismatch
+                checkMimetypeMatches(url, type);
+              }
+              break;
+            }
+          }
+          // register the image resource
+          // only check manifest fallback if the image is not in `picture`
+          registerReference(url, Reference.Type.IMAGE, inPicture);
+        }
+      }
+    }
+  }
+
+  protected void checkType(String type)
   {
     if (type == null)
     {
       return;
     }
-    Set<Property> propList = VocabUtil.parsePropertyList(type, vocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    Set<Property> propList = VocabUtil.parsePropertyList(type, vocabs, context, location());
     checkTypes(Property.filter(propList, StructureVocab.EPUB_TYPES.class));
+
+    // Check unrecognized properties from the structure vocab
+    for (Property property : propList)
+    {
+      if (StructureVocab.URI.equals(property.getVocabURI())) try
+      {
+        property.toEnum();
+      } catch (UnsupportedOperationException ex)
+      {
+        report.message(MessageId.OPF_088, location(), property.getName());
+      }
+    }
 
     // Check the 'region-based' property (Data Navigation Documents)
     if (propList.contains(DataNavVocab.VOCAB.get(DataNavVocab.EPUB_TYPES.REGION_BASED)))
 
     {
-      if (!"nav".equals(e.getName()) || !context.properties
+      if (!"nav".equals(currentElement().getName()) || !context.properties
           .contains(PackageVocabs.ITEM_VOCAB.get(PackageVocabs.ITEM_PROPERTIES.DATA_NAV)))
       {
-        report.message(MessageId.HTM_052, parser.getLocation());
+        report.message(MessageId.HTM_052, location());
       }
       else
       {
@@ -157,7 +256,7 @@ public class OPSHandler30 extends OPSHandler
     // Store whether the doc containt DICT content
     if (propList.contains(DictVocab.VOCAB.get(DictVocab.EPUB_TYPES.DICTIONARY)))
     {
-      context.featureReport.report(FeatureEnum.DICTIONARY, parser.getLocation(), null);
+      context.featureReport.report(FeatureEnum.DICTIONARY, location(), null);
     }
   }
 
@@ -165,13 +264,28 @@ public class OPSHandler30 extends OPSHandler
   {
     if (types.contains(EPUB_TYPES.PAGEBREAK))
     {
-      context.featureReport.report(FeatureEnum.PAGE_BREAK, parser.getLocation(), null);
+      context.featureReport.report(FeatureEnum.PAGE_BREAK, location(), null);
     }
     if (types.contains(EPUB_TYPES.INDEX))
     {
       allowedProperties.add(ITEM_PROPERTIES.INDEX);
-      context.featureReport.report(FeatureEnum.INDEX, parser.getLocation(), null);
+      context.featureReport.report(FeatureEnum.INDEX, location(), null);
     }
+    if (types.contains(EPUB_TYPES.GLOSSARY))
+    {
+      allowedProperties.add(ITEM_PROPERTIES.GLOSSARY);
+    }
+  }
+
+  @Override
+  protected URL checkSVGFontFaceURI()
+  {
+    URL href = super.checkSVGFontFaceURI();
+    if (href != null && context.isRemote(href))
+    {
+      requiredProperties.add(ITEM_PROPERTIES.REMOTE_RESOURCES);
+    }
+    return href;
   }
 
   protected void checkSSMLPh(String ph)
@@ -183,8 +297,7 @@ public class OPSHandler30 extends OPSHandler
     }
     if (ph.trim().length() < 1)
     {
-      report.message(MessageId.HTM_007,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+      report.message(MessageId.HTM_007, location());
     }
   }
 
@@ -192,136 +305,250 @@ public class OPSHandler30 extends OPSHandler
   public void characters(char[] chars, int arg1, int arg2)
   {
     super.characters(chars, arg1, arg2);
-    String str = new String(chars, arg1, arg2);
-    str = str.trim();
-    if (!str.equals("") && (inAudio || inVideo || imbricatedObjects > 0 || imbricatedCanvases > 0))
+
+    // set the palpable state
+    if (!new String(chars, arg1, arg2).trim().isEmpty())
     {
-      hasValidFallback = true;
+      // FIXME this should only be set for elements allowing flow/phrasing
+      currentElement().setPrivateData(HAS_PALPABLE_CONTENT, true);
     }
+
     if (anchorNeedsText)
     {
       anchorNeedsText = false;
     }
   }
 
+  @Override
   public void startElement()
   {
     super.startElement();
 
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
+
+    // set this element's initial palpable state to false
+    e.setPrivateData(HAS_PALPABLE_CONTENT, false);
+
+    checkDiscouragedElements();
+    processSemantics();
+    processSectioning();
+
     String name = e.getName();
+    if (EpubConstants.HtmlNamespaceUri.equals(e.getNamespace()))
+    {
+      if (name.equals("html"))
+      {
+        vocabs = VocabUtil.parsePrefixDeclaration(
+            e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "prefix"), RESERVED_VOCABS,
+            KNOWN_VOCAB_URIS, DEFAULT_VOCAB_URIS, report, location());
+      }
+      else if (name.equals("meta"))
+      {
+        processMeta();
+      }
+      else if (name.equals("form"))
+      {
+        requiredProperties.add(ITEM_PROPERTIES.SCRIPTED);
+      }
+      else if (name.equals("link"))
+      {
+        processLink();
+      }
 
-    processSemantics(e);
-    processSectioning(e);
+      else if (name.equals("audio"))
+      {
+        startMediaElement();
+      }
+      else if (name.equals("video"))
+      {
+        processVideo();
+        startMediaElement();
+      }
+      else if (name.equals("figure"))
+      {
+        processFigure();
+      }
+      else if (name.equals("table"))
+      {
+        processTable();
+      }
+      else if (name.equals("track"))
+      {
+        startTrack();
+      }
+      else if (name.equals("a"))
+      {
+        anchorNeedsText = true;
+        processAnchor(e);
+      }
+      else if (name.equals("input"))
+      {
+        startInput();
+      }
+      else if (name.equals("picture"))
+      {
+        inPicture = true;
+      }
+      else if (name.equals("source"))
+      {
+        if ("picture".equals(e.getParent().getName()))
+        {
+          checkImage(null, null);
+        }
+        else // audio or video source
+        {
+          startMediaSource();
+        }
+      }
+      else if (name.equals("embed"))
+      {
+        startEmbed();
+      }
+      else if (name.equals("blockquote") || name.equals("q") || name.equals("ins")
+          || name.equals("del"))
+      {
+        checkCiteAttribute();
+      }
+    }
+    else if ("http://www.w3.org/1998/Math/MathML".equals(e.getNamespace()))
+    {
+      if (name.equals("math"))
+      {
+        requiredProperties.add(ITEM_PROPERTIES.MATHML);
+        inMathML = true;
+        hasAltorAnnotation = (null != e.getAttribute("alttext"));
+        String altimg = e.getAttribute("altimg");
+        if (altimg != null)
+        {
+          super.checkImage(null, "altimg");
+        }
 
-    if (name.equals("html"))
-    {
-      vocabs = VocabUtil.parsePrefixDeclaration(
-          e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "prefix"), RESERVED_VOCABS,
-          KNOWN_VOCAB_URIS, DEFAULT_VOCAB_URIS, report,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+      }
+      else if (name.equals("annotation-xml"))
+      {
+        hasAltorAnnotation = true;
+      }
     }
-    else if (name.equals("link"))
+    else if ("http://www.w3.org/2000/svg".equals(e.getNamespace()))
     {
-      processLink(e);
+      if (name.equals("svg"))
+      {
+        processSVG();
+      }
+      else if (name.equals("a"))
+      {
+        anchorNeedsText = true;
+        processAnchor(e);
+      }
+      else if (name.equals("title"))
+      {
+        hasLabel = true;
+      }
+      else if (name.equals("text"))
+      {
+        hasLabel = true;
+      }
     }
-    else if (name.equals("object"))
+    else if (EpubConstants.EpubTypeNamespaceUri.equals(e.getNamespace()))
     {
-      processObject(e);
-    }
-    else if (name.equals("math"))
-    {
-      requiredProperties.add(ITEM_PROPERTIES.MATHML);
-      inMathML = true;
-      hasAltorAnnotation = (null != e.getAttribute("alttext"));
-    }
-    else if (!context.mimeType.equals("image/svg+xml") && name.equals("svg"))
-    {
-      requiredProperties.add(ITEM_PROPERTIES.SVG);
-      processStartSvg(e);
-    }
-    else if (name.equals("script"))
-    {
-      requiredProperties.add(ITEM_PROPERTIES.SCRIPTED);
-    }
-    else if (!context.mimeType.equals("image/svg+xml") && name.equals("switch"))
-    {
-      requiredProperties.add(ITEM_PROPERTIES.SWITCH);
-    }
-    else if (name.equals("audio"))
-    {
-      processAudio();
-    }
-    else if (name.equals("video"))
-    {
-      processVideo(e);
-    }
-    else if (name.equals("figure"))
-    {
-      processFigure(e);
-    }
-    else if (name.equals("table"))
-    {
-      processTable(e);
-    }
-    else if (name.equals("canvas"))
-    {
-      processCanvas();
-    }
-    else if (name.equals("img"))
-    {
-      processImg();
-    }
-    else if (name.equals("a"))
-    {
-      anchorNeedsText = true;
-      processAnchor(e);
-    }
-    else if (name.equals("annotation-xml"))
-    {
-      hasAltorAnnotation = true;
-    }
-    else if ("http://www.w3.org/2000/svg".equals(e.getNamespace()) && name.equals("title"))
-    {
-      hasTitle = true;
+      if (name.equals("switch"))
+      {
+        requiredProperties.add(ITEM_PROPERTIES.SWITCH);
+      }
     }
 
-    processInlineScripts(e);
+    processInlineScripts();
 
-    processSrc(("source".equals(name)) ? e.getParent().getName() : name, e.getAttribute("src"));
-
-    checkType(e, e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "type"));
+    checkType(e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "type"));
 
     checkSSMLPh(e.getAttributeNS("http://www.w3.org/2001/10/synthesis", "ph"));
   }
 
-  protected void processInlineScripts(com.adobe.epubcheck.xml.XMLElement e)
+  private void checkCiteAttribute()
+  {
+    URL url = checkURL(currentElement().getAttribute("cite"));
+    registerReference(url, Type.CITE);
+  }
+
+  private void startTrack()
+  {
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+    registerReference(url, Type.TRACK);
+  }
+
+  private void startInput()
+  {
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+    registerReference(url, Type.GENERIC);
+  }
+
+  private void startEmbed()
+  {
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+    checkMimetypeMatches(url, currentElement().getAttribute("type"));
+    registerReference(url, Type.GENERIC);
+
+  }
+
+  protected void checkDiscouragedElements()
+  {
+    XMLElement elem = currentElement();
+    if (EpubConstants.HtmlNamespaceUri.equals(elem.getNamespace()))
+    {
+      switch (elem.getName())
+      {
+      case "base":
+      case "embed":
+      case "rp":
+        report.message(MessageId.HTM_055, location(), elem.getName());
+      }
+
+    }
+  }
+
+  protected void processInlineScripts()
   {
     HashSet<String> scriptEvents = getScriptEvents();
     HashSet<String> mouseEvents = getMouseEvents();
 
+    XMLElement e = currentElement();
     for (int i = 0; i < e.getAttributeCount(); ++i)
     {
       XMLAttribute attr = e.getAttribute(i);
-      String name = attr.getName().toLowerCase();
+      String name = attr.getName().toLowerCase(Locale.ROOT);
       if (scriptEvents.contains(name) || mouseEvents.contains(name))
       {
-        requiredProperties.add(ITEM_PROPERTIES.SCRIPTED);
+        processJavascript();
         return;
       }
     }
   }
 
-  protected void processLink(XMLElement e)
+  @Override
+  protected void checkScript()
   {
-    String classAttribute = e.getAttribute("class");
+    super.checkScript();
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+    registerReference(url, Type.GENERIC);
+  }
+
+  @Override
+  protected void processJavascript()
+  {
+    super.processJavascript();
+    requiredProperties.add(ITEM_PROPERTIES.SCRIPTED);
+  }
+
+  protected void processLink()
+  {
+    String classAttribute = currentElement().getAttribute("class");
     if (classAttribute == null)
     {
       return;
     }
 
-    Set<Property> properties = VocabUtil.parsePropertyList(classAttribute, ALTCSS_VOCABS, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+    Set<Property> properties = VocabUtil.parsePropertyList(classAttribute, ALTCSS_VOCABS, context,
+        location());
     Set<AltStylesheetVocab.PROPERTIES> altClasses = Property.filter(properties,
         AltStylesheetVocab.PROPERTIES.class);
 
@@ -337,9 +564,7 @@ public class OPSHandler30 extends OPSHandler
 
     if (vertical && horizontal || day && night)
     {
-      report.message(MessageId.CSS_005,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()),
-          classAttribute);
+      report.message(MessageId.CSS_005, location(), classAttribute);
     }
   }
 
@@ -351,244 +576,316 @@ public class OPSHandler30 extends OPSHandler
     }
     if (inSvg || context.mimeType.equals("image/svg+xml"))
     {
-      hasTitle = Strings
-          .emptyToNull(e.getAttributeNS(EpubConstants.XLinkNamespaceUri, "title")) != null;
+      String title = e.getAttributeNS(EpubConstants.XLinkNamespaceUri, "title");
+      String ariaLabel = e.getAttribute("aria-label");
+      hasLabel = !Strings.isNullOrEmpty(title) || !Strings.isNullOrEmpty(ariaLabel);
     }
   }
 
-  protected void processImg()
+  protected void startMediaElement()
   {
-    if ((inAudio || inVideo || imbricatedObjects > 0 || imbricatedCanvases > 0))
+    assert "audio".equals(currentElement().getName()) || "video".equals(currentElement().getName());
+
+    mediaSources = new HashMap<>();
+
+    // check the `src` attribute
+    // note: schema ensures if `src` is set, the audio has no `source` children
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+
+    // register the reference (does nothing if URL is null)
+    registerMediaResource(url, context.getMimeType(url), false);
+  }
+
+  protected void endMediaElement()
+  {
+    assert "audio".equals(currentElement().getName()) || "video".equals(currentElement().getName());
+
+    // set fallback flag
+    // the media element has an intrinsic fallback if any of its source children
+    // represent a core media type resource
+    boolean hasFallback = mediaSources.values().stream()
+        .anyMatch(mimetype -> OPFChecker30.isCoreMediaType(mimetype));
+
+    // register the list of audio sources with the fallback flag
+    mediaSources.forEach((url, mimetype) -> registerMediaResource(url, mimetype, hasFallback));
+  }
+
+  protected void startMediaSource()
+  {
+    XMLElement elem = currentElement();
+    assert "source".equals(elem.getName());
+    if (!("audio".equals(elem.getParent().getName())
+        || "video".equals(elem.getParent().getName())))
     {
-      hasValidFallback = true;
+      return; // schema error was reported
+    }
+
+    // check the `src` attribute
+    URL url = checkResourceURL(elem.getAttribute("src"));
+
+    // check full-publication rules
+    if (context.container.isPresent())
+    {
+      // get the MIME type of the media resource
+      String mimetype = checkMimetypeMatches(url, elem.getAttribute("type"));
+
+      // record the type for fallback checking and resource registration,
+      // when closing `audio` after all `source` elements are parsed
+      mediaSources.put(url, mimetype);
     }
   }
 
-  protected void processCanvas()
+  protected void registerMediaResource(URL url, String mimetype, boolean hasFallback)
   {
-    imbricatedCanvases++;
-  }
-
-  protected void processAudio()
-  {
-    inAudio = true;
-    context.featureReport.report(FeatureEnum.AUDIO, parser.getLocation());
-  }
-
-  protected void processVideo(XMLElement e)
-  {
-    inVideo = true;
-    context.featureReport.report(FeatureEnum.VIDEO, parser.getLocation());
-
-    String posterSrc = e.getAttribute("poster");
-
-    String posterMimeType = null;
-    if (xrefChecker.isPresent() && posterSrc != null)
+    if (url == null) return;
+    if (OPFChecker30.isAudioType(mimetype))
     {
-      posterMimeType = xrefChecker.get().getMimeType(PathUtil.resolveRelativeReference(path,
-          posterSrc, base == null ? null : base.toString()));
-    }
-
-    if (posterMimeType != null && !OPFChecker.isBlessedImageType(posterMimeType))
-    {
-      report.message(MessageId.MED_001,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
-    }
-
-    if (posterSrc != null)
-    {
-      hasValidFallback = true;
-      processSrc(e.getName(), posterSrc);
-    }
-
-  }
-
-  protected void processHyperlink(String href)
-  {
-    super.processHyperlink(href);
-    if (inRegionBasedNav && xrefChecker.isPresent())
-    {
-      xrefChecker.get().registerReference(path, parser.getLineNumber(), parser.getColumnNumber(),
-          href, XRefChecker.Type.REGION_BASED_NAV);
-    }
-  }
-
-  protected void processSrc(String name, String src)
-  {
-
-    if (src != null)
-    {
-      src = src.trim();
-      if (src.equals(""))
-      {
-        report.message(MessageId.HTM_008,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), name));
-      }
-    }
-
-    if (src == null || !xrefChecker.isPresent())
-    {
-      return;
-    }
-
-    String srcMimeType = null;
-    Matcher matcher = DATA_URI_PATTERN.matcher(src);
-    if (matcher.matches())
-    {
-      srcMimeType = matcher.group(1);
+      context.featureReport.report(FeatureEnum.AUDIO, location());
+      registerReference(url, Type.AUDIO, hasFallback);
     }
     else
     {
-      if (src.matches("^[^:/?#]+://.*"))
-      {
-        requiredProperties.add(ITEM_PROPERTIES.REMOTE_RESOURCES);
-      }
-      else
-      {
-        src = PathUtil.resolveRelativeReference(path, src, base == null ? null : base.toString());
-      }
-
-      XRefChecker.Type refType;
-      if ("audio".equals(name))
-      {
-        refType = XRefChecker.Type.AUDIO;
-      }
-      else if ("video".equals(name))
-      {
-        refType = XRefChecker.Type.VIDEO;
-      }
-      else
-      {
-        refType = XRefChecker.Type.GENERIC;
-      }
-      if (!"img".equals(name)) // img already registered in super class
-      {
-        xrefChecker.get().registerReference(path, parser.getLineNumber(), parser.getColumnNumber(),
-            src, refType);
-      }
-
-      srcMimeType = xrefChecker.get().getMimeType(src);
+      context.featureReport.report(FeatureEnum.VIDEO, location());
+      registerReference(url, Type.VIDEO);
     }
+  }
 
-    if (srcMimeType == null)
+  protected String checkMimetypeMatches(URL resource, String mimetype)
+  {
+    // get the MIME type of the resource declared in the package document
+    String resourceMimetype = context.getMimeType(resource);
+
+    if (mimetype == null)
     {
-      return;
+      return resourceMimetype;
     }
-
-    if (!context.mimeType.equals("image/svg+xml") && srcMimeType.equals("image/svg+xml"))
+    else
     {
-      allowedProperties.add(ITEM_PROPERTIES.SVG);
-    }
+      // remove any params from the given MIME type string
+      mimetype = MIMEType.removeParams(mimetype);
 
-    if ((inAudio || inVideo || imbricatedObjects > 0 || imbricatedCanvases > 0)
-        && OPFChecker30.isCoreMediaType(srcMimeType) && !name.equals("track"))
-    {
-      hasValidFallback = true;
+      // hack: remove the codecs parameter in the resource type for OPUS audio
+      // so that the equality check works
+      // TODO remove this when we implement proper MIME type parsing
+      if (resourceMimetype != null && resourceMimetype.matches("audio/ogg\\s*;\\s*codecs=opus"))
+      {
+        resourceMimetype = "audio/ogg";
+      }
+
+      // report any MIME type mismatch as a warning
+      if (resourceMimetype != null && !resourceMimetype.equals(mimetype))
+      {
+        report.message(MessageId.OPF_013, location(), context.relativize(resource), mimetype,
+            resourceMimetype);
+      }
+      // return the given MIME type (without parameters)
+      return mimetype;
     }
 
   }
 
-  protected void processObject(XMLElement e)
+  protected void processVideo()
   {
-    imbricatedObjects++;
 
-    String type = e.getAttribute("type");
-    String data = e.getAttribute("data");
+    URL posterURL = checkResourceURL(currentElement().getAttribute("poster"));
+    registerReference(posterURL, Type.IMAGE);
 
-    if (data != null)
+  }
+
+  @Override
+  protected void processHyperlink(URL href)
+  {
+    super.processHyperlink(href);
+    if ("data".equals(href.scheme()))
     {
-      processSrc(e.getName(), data);
-      data = PathUtil.resolveRelativeReference(path, data, base == null ? null : base.toString());
+      report.message(MessageId.RSC_029, location());
+      return;
+    }
+    if (inRegionBasedNav)
+    {
+      registerReference(href, Reference.Type.REGION_BASED_NAV);
+    }
+  }
+
+  protected URL checkResourceURL(String src)
+  {
+    if (src == null || src.trim().isEmpty()) return null;
+
+    // parse and check the URL
+    URL url = checkURL(src);
+
+    // the `remote-resources` property MUST be set if a remote resource is
+    // referenced
+    if (context.isRemote(url))
+    {
+      requiredProperties.add(ITEM_PROPERTIES.REMOTE_RESOURCES);
     }
 
-    if (type != null && data != null && xrefChecker.isPresent()
-        && !type.equals(xrefChecker.get().getMimeType(data)))
+    // get the resource MIME type
+    String mimeType = context.getMimeType(url);
+    if (mimeType != null)
     {
-      String context = "<object";
-      for (int i = 0; i < e.getAttributeCount(); i++)
-      {
-        XMLAttribute attribute = e.getAttribute(i);
-        context += " " + attribute.getName() + "=\"" + attribute.getValue() + "\"";
-      }
-      context += ">";
-      report.message(MessageId.OPF_013,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), context),
-          type, xrefChecker.get().getMimeType(data));
-    }
-
-    if (type != null)
-    {
-      if (!context.mimeType.equals("image/svg+xml") && type.equals("image/svg+xml"))
+      // the `svg` property MAY be set if an SVG resource is referenced in HTML
+      if (MIMEType.SVG.is(mimeType) && !MIMEType.SVG.is(context.mimeType))
       {
         allowedProperties.add(ITEM_PROPERTIES.SVG);
       }
-
-      if (OPFChecker30.isCoreMediaType(type))
-      {
-        hasValidFallback = true;
-      }
     }
 
-    if (hasValidFallback)
-    {
-      return;
-    }
-    // check bindings
-    if (xrefChecker.isPresent() && type != null
-        && xrefChecker.get().getBindingHandlerId(type) != null)
-    {
-      hasValidFallback = true;
-    }
+    return url;
   }
 
-  protected void processStartSvg(XMLElement e)
+  @Override
+  protected void checkObject()
+  {
+    // do nothing, we check this in the closing tag
+  }
+
+  protected void endObject()
+  {
+    XMLElement elem = currentElement();
+
+    // check the object resource
+    URL url = checkResourceURL(elem.getAttribute("data"));
+
+    // check the MIME type declared for this object
+    checkMimetypeMatches(url, elem.getAttribute("type"));
+
+    // the object has intrinsic fallback if it has palpable content
+    boolean hasFallback = (boolean) elem.getPrivateData(HAS_PALPABLE_CONTENT);
+
+    // register the reference
+    registerReference(url, Type.GENERIC, hasFallback);
+
+  }
+
+  @Override
+  protected void checkIFrame()
+  {
+    super.checkIFrame();
+    URL url = checkResourceURL(currentElement().getAttribute("src"));
+    registerReference(url, Type.GENERIC);
+  }
+
+  protected void processSVG()
   {
     inSvg = true;
-    boolean foundXmlLang = false;
-    boolean foundLang = false;
-    for (int i = 0; i < e.getAttributeCount() && !foundLang && !foundXmlLang; ++i)
+    if (!context.mimeType.equals("image/svg+xml"))
     {
-      XMLAttribute a = e.getAttribute(i);
-      if ("lang".compareTo(a.getName()) == 0)
+      requiredProperties.add(ITEM_PROPERTIES.SVG);
+    }
+    else if (!isOutermostSVGAlreadyProcessed)
+    {
+      isOutermostSVGAlreadyProcessed = true;
+      if (context.opfItem.isPresent() && context.opfItem.get().isFixedLayout()
+          && currentElement().getAttribute("viewBox") == null)
       {
-        foundXmlLang = foundXmlLang
-            | (EpubConstants.XmlNamespaceUri.compareTo(a.getNamespace()) == 0);
-        foundLang = (EpubConstants.HtmlNamespaceUri.compareTo(a.getNamespace()) == 0);
+
+        report.message(MessageId.HTM_048, location());
       }
     }
-    if (!foundLang || !foundXmlLang)
+  }
+
+  protected void processMeta()
+  {
+    XMLElement e = currentElement();
+    if (EpubConstants.HtmlNamespaceUri.equals(e.getNamespace()))
     {
-      report.message(MessageId.HTM_043,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), e.getName()));
+      String name = e.getAttribute("name");
+      if ("viewport".equals(Strings.nullToEmpty(name).trim()))
+      {
+        String content = e.getAttribute("content");
+        // For fixed-layout documents, check the first viewport meta element
+        if (!hasViewport && context.opfItem.isPresent() && context.opfItem.get().isFixedLayout())
+        {
+          hasViewport = true;
+          // parse viewport metadata
+          List<ViewportMeta.ParseError> syntaxErrors = new LinkedList<>();
+          ViewportMeta viewport = ViewportMeta.parse(content,
+              new ViewportMeta.ErrorHandler()
+              {
+                @Override
+                public void error(ParseError error, int position)
+                {
+                  syntaxErrors.add(error);
+                }
+              });
+          if (!syntaxErrors.isEmpty())
+          {
+            // report any syntax error
+            report.message(MessageId.HTM_047, location(), content);
+          }
+          else
+          {
+            for (String property : Arrays.asList("width", "height"))
+            {
+              // check that viewport metadata has a valid width value
+              if (!viewport.hasProperty(property))
+              {
+                report.message(MessageId.HTM_056, location(), property);
+              }
+              else
+              {
+                List<String> values = viewport.getValues(property);
+                if (values.size() > 1)
+                {
+                  report.message(MessageId.HTM_059, location(), property,
+                      values.stream().map(v -> '"' + v + '"').collect(Collectors.joining(", ")));
+                }
+                if (!ViewportMeta.isValidProperty(property, values.get(0)))
+                {
+                  report.message(MessageId.HTM_057, location(), property);
+                }
+              }
+            }
+
+          }
+        }
+        else
+        {
+          // Report ignored secondary viewport meta in fixed-layout documents
+          if (context.opfItem.isPresent() && context.opfItem.get().isFixedLayout())
+          {
+            report.message(MessageId.HTM_060a, location(), content);
+          }
+          // Report ignored viewport meta in reflowable documents
+          else
+          {
+            report.message(MessageId.HTM_060b, location(), content);
+          }
+        }
+      }
     }
   }
 
-  protected void processTable(XMLElement e)
+  protected void processTable()
   {
-    context.featureReport.report(FeatureEnum.TABLE, parser.getLocation());
+    context.featureReport.report(FeatureEnum.TABLE, location());
   }
 
-  protected void processFigure(XMLElement e)
+  protected void processFigure()
   {
-    context.featureReport.report(FeatureEnum.FIGURE, parser.getLocation());
+    context.featureReport.report(FeatureEnum.FIGURE, location());
   }
 
-  private void processSemantics(XMLElement e)
+  private void processSemantics()
   {
+    XMLElement e = currentElement();
     if (e.getAttribute("itemscope") != null
         && !context.featureReport.hasFeature(FeatureEnum.HAS_MICRODATA))
     {
-      context.featureReport.report(FeatureEnum.HAS_MICRODATA, parser.getLocation());
+      context.featureReport.report(FeatureEnum.HAS_MICRODATA, location());
     }
     if (e.getAttribute("property") != null
         && !context.featureReport.hasFeature(FeatureEnum.HAS_RDFA))
     {
-      context.featureReport.report(FeatureEnum.HAS_RDFA, parser.getLocation());
+      context.featureReport.report(FeatureEnum.HAS_RDFA, location());
     }
   }
 
-  private void processSectioning(XMLElement e)
+  private void processSectioning()
   {
+    XMLElement e = currentElement();
     if (isLinear && context.profile == EPUBProfile.EDUPUB
         && EpubConstants.HtmlNamespaceUri.equals(e.getNamespace()))
     {
@@ -598,13 +895,13 @@ public class OPSHandler30 extends OPSHandler
       }
       else if (inBody && !"section".equals(e.getName()))
       {
-        context.featureReport.report(FeatureEnum.SECTIONS, parser.getLocation());
+        context.featureReport.report(FeatureEnum.SECTIONS, location());
         inBody = false;
       }
       else if ("section".equals(e.getName()))
       {
         inBody = false;
-        context.featureReport.report(FeatureEnum.SECTIONS, parser.getLocation());
+        context.featureReport.report(FeatureEnum.SECTIONS, location());
       }
     }
   }
@@ -613,56 +910,36 @@ public class OPSHandler30 extends OPSHandler
   public void endElement()
   {
     super.endElement();
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String name = e.getName();
+
     if (openElements == 0 && (name.equals("html") || name.equals("svg")))
     {
+      checkOverlaysStyles();
       checkProperties();
     }
     else if (name.equals("object"))
     {
-      imbricatedObjects--;
-      if (imbricatedObjects == 0 && imbricatedCanvases == 0)
-      {
-        checkFallback("Object");
-      }
-    }
-    else if (name.equals("canvas"))
-    {
-      imbricatedCanvases--;
-      if (imbricatedObjects == 0 && imbricatedCanvases == 0)
-      {
-        checkFallback("Canvas");
-      }
+      endObject();
     }
     else if (name.equals("video"))
     {
-      if (imbricatedObjects == 0 && imbricatedCanvases == 0)
-      {
-        checkFallback("Video");
-      }
-      inVideo = false;
+      endMediaElement();
     }
     else if (name.equals("audio"))
     {
-      if (imbricatedObjects == 0 && imbricatedCanvases == 0)
-      {
-        checkFallback("Audio");
-      }
-      inAudio = false;
+      endMediaElement();
     }
     else if (name.equals("a"))
     {
       if (anchorNeedsText)
       {
-        report.message(MessageId.ACC_004,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), "a"));
+        report.message(MessageId.ACC_004, location().context("a"));
         anchorNeedsText = false;
       }
-      if ((inSvg || context.mimeType.equals("image/svg+xml")) && !hasTitle)
+      if ((inSvg || context.mimeType.equals("image/svg+xml")) && !hasLabel)
       {
-        report.message(MessageId.ACC_011, EPUBLocation.create(path, parser.getLineNumber(),
-            parser.getColumnNumber(), e.getName()));
+        report.message(MessageId.ACC_011, location().context(e.getName()));
       }
     }
     else if (name.equals("math"))
@@ -670,35 +947,101 @@ public class OPSHandler30 extends OPSHandler
       inMathML = false;
       if (!hasAltorAnnotation)
       {
-        report.message(MessageId.ACC_009,
-            EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber(), "math"));
+        report.message(MessageId.ACC_009, location().context("math"));
       }
     }
     else if (name.equals("nav") && inRegionBasedNav)
     {
       inRegionBasedNav = false;
     }
+    else if (name.equals("picture"))
+    {
+      inPicture = false;
+    }
+    else if (name.equals("svg"))
+    {
+      inSvg = false;
+    }
+    else if (EpubConstants.HtmlNamespaceUri.equals(e.getNamespace()) && name.equals("head"))
+    {
+      checkHead();
+    }
+
+    updatePalpableState();
   }
 
-  /*
-   * Checks fallbacks for video, audio and object elements
-   */
-  protected void checkFallback(String elementType)
+  protected boolean isPalpable()
   {
-    if (hasValidFallback)
+    XMLElement elem = currentElement();
+    String name = elem.getName();
+
+    if (elem.getAttribute("hidden") != null)
     {
-      hasValidFallback = false;
+      return false;
     }
-    else
+    switch (elem.getNamespace())
     {
-      report.message(MessageId.MED_002,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()), elementType);
+    case "http://www.w3.org/1999/xhtml":
+      switch (name)
+      {
+      // Embedded Content
+      case "audio":
+      case "canvas":
+      case "embed":
+      case "iframe":
+      case "img":
+      case "object":
+      case "picture":
+      case "video":
+        return true;
+      // Special cases
+      // case "input":
+      // return !"hidden".equals(elem.getAttribute("type"));
+      // case "dl":
+      // // check dl has name-value group
+      // break;
+      // case "ul":
+      // case "ol":
+      // case "menu":
+      // // check list has list items
+      // break;
+      default:
+        // FIXME should exclude some elements (e.g. templates, script, etc)
+        return (boolean) elem.getPrivateData(HAS_PALPABLE_CONTENT);
+      }
+    case "http://www.w3.org/2000/svg":
+      return "svg".equals(name);
+    case "http://www.w3.org/1998/Math/MathML":
+      return "math".equals(name);
+    default:
+      return false;
+    }
+  }
+
+  private void updatePalpableState()
+  {
+    XMLElement elem = currentElement();
+    if (elem.getParent() != null)
+    {
+      elem.getParent().getPrivateData().compute(HAS_PALPABLE_CONTENT,
+          (k, v) -> (boolean) v || isPalpable());
+    }
+  }
+
+  protected void checkOverlaysStyles()
+  {
+    if (context.opfItem.isPresent() && context.opfItem.get().getMediaOverlay() != null
+        && (context.featureReport.hasFeature(FeatureEnum.MEDIA_OVERLAYS_ACTIVE_CLASS)
+            || context.featureReport.hasFeature(FeatureEnum.MEDIA_OVERLAYS_PLAYBACK_ACTIVE_CLASS))
+        && !this.hasCSS)
+    {
+      report.message(MessageId.CSS_030, location());
     }
   }
 
   protected void checkProperties()
   {
-    if (!context.ocf.isPresent()) // single file validation
+    if (!context.container.isPresent()) // single file validation
     {
       return;
     }
@@ -707,8 +1050,8 @@ public class OPSHandler30 extends OPSHandler
 
     for (ITEM_PROPERTIES requiredProperty : Sets.difference(requiredProperties, itemProps))
     {
-      report.message(MessageId.OPF_014, EPUBLocation.create(path),
-          EnumVocab.ENUM_TO_NAME.apply(requiredProperty));
+      report.message(MessageId.OPF_014, EPUBLocation.of(context),
+          PackageVocabs.ITEM_VOCAB.getName(requiredProperty));
     }
 
     Set<ITEM_PROPERTIES> uncheckedProperties = Sets.difference(itemProps, requiredProperties)
@@ -720,14 +1063,47 @@ public class OPSHandler30 extends OPSHandler
     if (uncheckedProperties.contains(ITEM_PROPERTIES.REMOTE_RESOURCES))
     {
       uncheckedProperties.remove(ITEM_PROPERTIES.REMOTE_RESOURCES);
-      report.message(MessageId.OPF_018,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+      if (!requiredProperties.contains(ITEM_PROPERTIES.SCRIPTED))
+      {
+        report.message(MessageId.OPF_018, location());
+      }
+      else
+      {
+        report.message(MessageId.OPF_018b, location());
+      }
     }
 
     if (!uncheckedProperties.isEmpty())
     {
-      report.message(MessageId.OPF_015, EPUBLocation.create(path), Joiner.on(", ")
-          .join(Collections2.transform(uncheckedProperties, EnumVocab.ENUM_TO_NAME)));
+      report.message(MessageId.OPF_015, EPUBLocation.of(context),
+          Joiner.on(", ").join(PackageVocabs.ITEM_VOCAB.getNames(uncheckedProperties)));
     }
   }
+
+  protected void checkHead()
+  {
+    if (context.opfItem.isPresent() && context.opfItem.get().isFixedLayout() && !hasViewport)
+    {
+      report.message(MessageId.HTM_046, location());
+    }
+  }
+
+  @Override
+  protected void checkLink()
+  {
+    super.checkLink();
+    XMLElement e = currentElement();
+    String rel = e.getAttribute("rel");
+    if (rel != null)
+    {
+      String title = e.getAttribute("title");
+      List<String> linkTypes = TOKENIZER.splitToList(rel);
+      if (linkTypes.contains("alternate") && linkTypes.contains("stylesheet")
+          && Strings.isNullOrEmpty(title))
+      {
+        report.message(MessageId.CSS_015, location());
+      }
+    }
+  }
+
 }

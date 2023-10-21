@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.security.InvalidParameterException;
 
+// FIXME 2022 rename to ByteArrayUtils
 public class CheckUtil
 {
   public static boolean checkString(byte[] arr, int offset, String string)
@@ -59,8 +60,7 @@ public class CheckUtil
     * MimeType already verified to match application/epub+zip. Depending on
     * version, verifying trailing spaces.
     */
-  public static boolean checkTrailingSpaces(InputStream input,
-      EPUBVersion version, StringBuilder sb) throws IOException
+  public static boolean checkTrailingSpaces(InputStream input, StringBuilder sb) throws IOException
   {
     ByteArrayOutputStream baos = new ByteArrayOutputStream(2048);
 
@@ -69,21 +69,19 @@ public class CheckUtil
     {
       if ((c = input.read()) == -1)
       {
-        return false;
+        return true; // ignored; should be checked by checkEpubHeader() in com.adobe.epubcheck.api.EpubCheck
       }
       else
       {
         baos.write(c);
       }
     }
-
-    int ch = input.read();
-    if (version == EPUBVersion.VERSION_2 && ch != -1)
-    {
-      return false;
+    if (! baos.toString().equals("application/epub+zip")) {
+        return true; // ignored; should be checked by checkEpubHeader() in com.adobe.epubcheck.api.EpubCheck
     }
 
-    if (version == EPUBVersion.VERSION_3 && ch != ' ' && ch != -1)
+    int ch = input.read();
+    if (ch != -1)
     {
       return false;
     }

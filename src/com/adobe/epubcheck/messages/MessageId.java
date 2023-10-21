@@ -28,6 +28,9 @@ import java.util.NoSuchElementException;
 
 public enum MessageId implements Comparable<MessageId>
 {
+  // General info messages
+  INF_001("INF-001"),
+  
   // Messages relating to accessibility
   ACC_001("ACC-001"),
   ACC_002("ACC-002"),
@@ -55,6 +58,7 @@ public enum MessageId implements Comparable<MessageId>
   CHK_005("CHK-005"),
   CHK_006("CHK-006"),
   CHK_007("CHK-007"),
+  CHK_008("CHK-008"),
 
   // Messages associated with styles
   CSS_001("CSS-001"),
@@ -80,8 +84,9 @@ public enum MessageId implements Comparable<MessageId>
   CSS_023("CSS-023"),
   CSS_024("CSS-024"),
   CSS_025("CSS-025"),
-  CSS_027("CSS-027"),
   CSS_028("CSS-028"),
+  CSS_029("CSS-029"),
+  CSS_030("CSS-030"),
 
   // Messages relating to xhtml markup
   HTM_001("HTM-001"),
@@ -116,7 +121,6 @@ public enum MessageId implements Comparable<MessageId>
   HTM_033("HTM-033"),
   HTM_036("HTM-036"),
   HTM_038("HTM-038"),
-  HTM_043("HTM-043"),
   HTM_044("HTM-044"),
   HTM_045("HTM-045"),
   HTM_046("HTM-046"),
@@ -126,6 +130,16 @@ public enum MessageId implements Comparable<MessageId>
   HTM_050("HTM-050"),
   HTM_051("HTM-051"),
   HTM_052("HTM-052"),
+  HTM_053("HTM_053"),
+  HTM_054("HTM_054"),
+  HTM_055("HTM_055"),
+  HTM_056("HTM_056"),
+  HTM_057("HTM_057"),
+  HTM_058("HTM_058"),
+  HTM_059("HTM_059"),
+  HTM_060a("HTM_060a"),
+  HTM_060b("HTM_060b"),
+  HTM_061("HTM_061"),
 
   // Messages associated with media (images, audio and video)
   MED_001("MED-001"),
@@ -134,6 +148,18 @@ public enum MessageId implements Comparable<MessageId>
   MED_004("MED-004"),
   MED_005("MED-005"),
   MED_006("MED_006"),
+  MED_007("MED_007"),
+  MED_008("MED-008"),
+  MED_009("MED-009"),
+  MED_010("MED_010"),
+  MED_011("MED_011"),
+  MED_012("MED_012"),
+  MED_013("MED_013"),
+  MED_014("MED_014"),
+  MED_015("MED_015"),
+  MED_016("MED_016"),
+  MED_017("MED_017"),
+  MED_018("MED_018"),
 
   // Epub3 based table of content errors
   NAV_001("NAV-001"),
@@ -145,6 +171,8 @@ public enum MessageId implements Comparable<MessageId>
   NAV_007("NAV-007"),
   NAV_008("NAV-008"),
   NAV_009("NAV-009"),
+  NAV_010("NAV-010"),
+  NAV_011("NAV-011"),
 
   // Epub2 based table of content messages
   NCX_001("NCX-001"),
@@ -181,6 +209,7 @@ public enum MessageId implements Comparable<MessageId>
   OPF_016("OPF-016"),
   OPF_017("OPF-017"),
   OPF_018("OPF-018"),
+  OPF_018b("OPF-018b"),
   OPF_019("OPF-019"),
   OPF_020("OPF-020"),
   OPF_021("OPF-021"),
@@ -220,7 +249,6 @@ public enum MessageId implements Comparable<MessageId>
   OPF_058("OPF-058"),
   OPF_059("OPF-059"),
   OPF_060("OPF-060"),
-  OPF_061("OPF-061"),
   OPF_062("OPF-062"),
   OPF_063("OPF-063"),
   OPF_064("OPF-064"),
@@ -244,6 +272,23 @@ public enum MessageId implements Comparable<MessageId>
   OPF_082("OPF-082"),
   OPF_083("OPF-083"),
   OPF_084("OPF-084"),
+  OPF_085("OPF-085"),
+  OPF_086("OPF-086"),
+  OPF_086b("OPF-086b"),
+  OPF_087("OPF-087"),
+  OPF_088("OPF-088"),
+  OPF_089("OPF-089"),
+  OPF_090("OPF-090"),
+  OPF_091("OPF-091"),
+  OPF_092("OPF-092"),
+  OPF_093("OPF-093"),
+  OPF_094("OPF-094"),
+  OPF_095("OPF-095"),
+  OPF_096("OPF-096"),
+  OPF_096b("OPF-096b"),
+  OPF_097("OPF-097"),
+  OPF_098("OPF-098"),
+  OPF_099("OPF-099"),
 
   // Messages relating to the entire package
   PKG_001("PKG-001"),
@@ -267,6 +312,10 @@ public enum MessageId implements Comparable<MessageId>
   PKG_021("PKG-021"),
   PKG_022("PKG-022"),
   PKG_023("PKG-023"),
+  PKG_024("PKG-024"),
+  PKG_025("PKG-025"),
+  PKG_026("PKG-026"),
+  PKG_027("PKG-027"),
 
   // Messages relating to resources
   RSC_001("RSC-001"),
@@ -275,6 +324,7 @@ public enum MessageId implements Comparable<MessageId>
   RSC_004("RSC-004"),
   RSC_005("RSC-005"),
   RSC_006("RSC-006"),
+  RSC_006b("RSC-006b"),
   RSC_007("RSC-007"),
   RSC_007w("RSC-007w"),
   RSC_008("RSC-008"),
@@ -292,6 +342,17 @@ public enum MessageId implements Comparable<MessageId>
   RSC_020("RSC-020"),
   RSC_021("RSC-021"),
   RSC_022("RSC-022"),
+  RSC_023("RSC-023"),
+  RSC_024("RSC-024"),
+  RSC_025("RSC-025"),
+  RSC_026("RSC-026"),
+  RSC_027("RSC-027"),
+  RSC_028("RSC-028"),
+  RSC_029("RSC-029"),
+  RSC_030("RSC-030"),
+  RSC_031("RSC-031"),
+  RSC_032("RSC-032"),
+  RSC_033("RSC-033"),
 
   // Messages relating to scripting
   SCP_001("SCP-001"),

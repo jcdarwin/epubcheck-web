@@ -1,17 +1,24 @@
 package com.adobe.epubcheck.vocab;
 
-public class StructureVocab
-{
-  public static final String URI = "http://www.idpf.org/epub/vocab/structure/#";
-  public static final EnumVocab<EPUB_TYPES> VOCAB = new EnumVocab<EPUB_TYPES>(EPUB_TYPES.class, URI);
+import com.adobe.epubcheck.opf.ValidationContext;
+import com.google.common.base.Preconditions;;
 
-  public static enum EPUB_TYPES
+public final class StructureVocab
+{
+
+  public static final String URI = "http://www.idpf.org/epub/vocab/structure/#";
+  public static final EnumVocab<EPUB_TYPES> VOCAB = new EnumVocab<EPUB_TYPES>(EPUB_TYPES.class,
+      URI);
+  public static final Vocab UNCHECKED_VOCAB = new UncheckedVocab(URI, "");
+
+  public static enum EPUB_TYPES implements PropertyStatus
   {
     ACKNOWLEDGMENTS,
     AFTERWORD,
-    ANNOREF,
-    ANNOTATION,
+    ANNOREF(DEPRECATED),
+    ANNOTATION(DEPRECATED),
     APPENDIX,
+    ASIDE(DISALLOWED_ON_CONTENT_DOCS),
     ASSESSMENT,
     BACKMATTER,
     BIBLIOENTRY,
@@ -28,10 +35,12 @@ public class StructureVocab
     COVERTITLE,
     DEDICATION,
     DIVISION,
+    ENDNOTE,
+    ENDNOTES,
     EPIGRAPH,
     EPILOGUE,
     ERRATA,
-    FIGURE,
+    FIGURE(DISALLOWED_ON_CONTENT_DOCS),
     FOOTNOTE,
     FOOTNOTES,
     FOREWORD,
@@ -42,7 +51,7 @@ public class StructureVocab
     GLOSSTERM,
     HALFTITLE,
     HALFTITLEPAGE,
-    HELP,
+    HELP(DEPRECATED),
     IMPRIMATUR,
     IMPRINT,
     INDEX,
@@ -51,14 +60,14 @@ public class StructureVocab
     LANDMARKS,
     LEARNING_OBJECTIVE,
     LEARNING_RESOURCE,
-    LIST,
-    LIST_ITEM,
+    LIST(DISALLOWED_ON_CONTENT_DOCS),
+    LIST_ITEM(DISALLOWED_ON_CONTENT_DOCS),
     LOA,
     LOI,
     LOT,
     LOV,
-    MARGINALIA,
-    NOTE,
+    MARGINALIA(DEPRECATED),
+    NOTE(DEPRECATED),
     NOTEREF,
     NOTICE,
     OTHER_CREDITS,
@@ -69,21 +78,50 @@ public class StructureVocab
     PREAMBLE,
     PREFACE,
     PROLOGUE,
-    REARNOTE,
-    REARNOTES,
+    REARNOTE(DEPRECATED),
+    REARNOTES(DEPRECATED),
     REVISION_HISTORY,
-    SIDEBAR,
-    SUBCHAPTER,
+    SIDEBAR(DEPRECATED),
+    SUBCHAPTER(DEPRECATED),
     SUBTITLE,
-    TABLE,
-    TABLE_CELL,
-    TABLE_ROW,
+    TABLE(DISALLOWED_ON_CONTENT_DOCS),
+    TABLE_CELL(DISALLOWED_ON_CONTENT_DOCS),
+    TABLE_ROW(DISALLOWED_ON_CONTENT_DOCS),
+    TIP,
     TITLE,
     TITLEPAGE,
     TOC,
     TOPIC_SENTENCE,
     VOLUME,
-    WARNING,
-    QNA
+    WARNING(DEPRECATED),
+    QNA;
+
+    private final PropertyStatus status;
+
+    private EPUB_TYPES()
+    {
+      this(ALLOWED);
+    }
+
+    private EPUB_TYPES(PropertyStatus status)
+    {
+      this.status = Preconditions.checkNotNull(status);
+    }
+
+    @Override
+    public boolean isAllowed(ValidationContext context)
+    {
+      return status.isAllowed(context);
+    }
+
+    @Override
+    public boolean isDeprecated()
+    {
+      return status.isDeprecated();
+    }
+  }
+
+  private StructureVocab()
+  {
   }
 }

@@ -37,14 +37,14 @@ public class DefaultReportImpl extends MasterReport
   public DefaultReportImpl(String ePubName)
   {
     this(ePubName, null, false);
-	}
+  }
 
   public DefaultReportImpl(String ePubName, String info, boolean quiet)
-	{
-		this.quiet = quiet;
+  {
+    this.quiet = quiet;
     String adjustedPath = PathUtil.removeWorkingDirectory(ePubName);
     this.setEpubFileName(adjustedPath);
-		if (info != null)
+    if (info != null)
     {
       //warning("", 0, 0, info);
     }
@@ -89,12 +89,14 @@ public class DefaultReportImpl extends MasterReport
 
   String formatMessage(Message message, EPUBLocation location, Object... args)
   {
-    String fileName = (location.getPath() == null ? "" : "/" + location.getPath());
-    fileName = PathUtil.removeWorkingDirectory(fileName);
+    String epubFileName = PathUtil.removeWorkingDirectory(this.getEpubFileName());
+    String fileName = location.getPath();
+    // remove duplicate epub name from path and empty fileName variable
+    fileName = epubFileName.endsWith(fileName) ? "" : "/" + fileName;
     return String.format("%1$s(%2$s): %3$s%4$s(%5$s,%6$s): %7$s",
         message.getSeverity(),
         message.getID(),
-        PathUtil.removeWorkingDirectory(this.getEpubFileName()),
+        epubFileName,
         fileName,
         location.getLine(),
         location.getColumn(),
@@ -111,7 +113,7 @@ public class DefaultReportImpl extends MasterReport
         case FORMAT_VERSION:
           if (!quiet)
           {
-            outWriter.println(String.format(Messages.get("validating_version_message"), value));
+            outWriter.println(String.format(getMessages().get("validating_version_message"), value));
           }
           break;
         default:

@@ -1,139 +1,245 @@
 package com.adobe.epubcheck.overlay;
 
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.w3c.epubcheck.core.references.Reference;
+import org.w3c.epubcheck.util.url.URLUtils;
+
 import com.adobe.epubcheck.api.EPUBLocation;
-import com.adobe.epubcheck.api.Report;
 import com.adobe.epubcheck.messages.MessageId;
 import com.adobe.epubcheck.opf.OPFChecker30;
 import com.adobe.epubcheck.opf.ValidationContext;
-import com.adobe.epubcheck.opf.XRefChecker;
 import com.adobe.epubcheck.util.EpubConstants;
-import com.adobe.epubcheck.util.HandlerUtil;
-import com.adobe.epubcheck.util.PathUtil;
+import com.adobe.epubcheck.vocab.AggregateVocab;
+import com.adobe.epubcheck.vocab.PackageVocabs;
+import com.adobe.epubcheck.vocab.PackageVocabs.ITEM_PROPERTIES;
+import com.adobe.epubcheck.vocab.Property;
 import com.adobe.epubcheck.vocab.StructureVocab;
 import com.adobe.epubcheck.vocab.Vocab;
 import com.adobe.epubcheck.vocab.VocabUtil;
-import com.adobe.epubcheck.xml.XMLElement;
-import com.adobe.epubcheck.xml.XMLHandler;
-import com.adobe.epubcheck.xml.XMLParser;
+import com.adobe.epubcheck.xml.handlers.XMLHandler;
+import com.adobe.epubcheck.xml.model.XMLElement;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 
-public class OverlayHandler implements XMLHandler
+import io.mola.galimatias.URL;
+
+public class OverlayHandler extends XMLHandler
 {
 
   private static Map<String, Vocab> RESERVED_VOCABS = ImmutableMap.<String, Vocab> of("",
-      StructureVocab.VOCAB);
+      AggregateVocab.of(StructureVocab.VOCAB, StructureVocab.UNCHECKED_VOCAB));
   private static Map<String, Vocab> KNOWN_VOCAB_URIS = ImmutableMap.of();
   private static Set<String> DEFAULT_VOCAB_URIS = ImmutableSet.of(StructureVocab.URI);
 
-  private final ValidationContext context;
-  private final String path;
-  private final Report report;
-  private final XMLParser parser;
-
-  private boolean checkedUnsupportedXMLVersion;
-
   private Map<String, Vocab> vocabs = RESERVED_VOCABS;
 
-  public OverlayHandler(ValidationContext context, XMLParser parser)
+  private Set<String> resourceRefs = new HashSet<String>();
+
+  private final Set<ITEM_PROPERTIES> requiredProperties = EnumSet.noneOf(ITEM_PROPERTIES.class);
+
+  public OverlayHandler(ValidationContext context)
   {
-    this.context = context;
-    this.path = context.path;
-    this.report = context.report;
-    this.parser = parser;
-    checkedUnsupportedXMLVersion = false;
+    super(context);
   }
 
+  @Override
   public void startElement()
   {
-    if (!checkedUnsupportedXMLVersion)
-    {
-      HandlerUtil.checkXMLVersion(parser);
-      checkedUnsupportedXMLVersion = true;
-    }
-
-    XMLElement e = parser.getCurrentElement();
+    XMLElement e = currentElement();
     String name = e.getName();
 
-    if (name.equals("smil"))
+    processGlobalAttrs();
+
+    switch (name)
     {
+    case "smil":
       vocabs = VocabUtil.parsePrefixDeclaration(
           e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "prefix"), RESERVED_VOCABS,
-          KNOWN_VOCAB_URIS, DEFAULT_VOCAB_URIS, report,
-          EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
+          KNOWN_VOCAB_URIS, DEFAULT_VOCAB_URIS, report, location());
+      break;
+
+    case "body":
+    case "seq":
+      processTextRef();
+      break;
+
+    case "text":
+      processTextSrc();
+      break;
+
+    case "audio":
+      processAudioSrc();
+      checkTime(e.getAttribute("clipBegin"), e.getAttribute("clipEnd"));
+      break;
     }
-    else if (name.equals("seq"))
+  }
+
+  private void checkTime(String clipBegin, String clipEnd)
+  {
+
+    if (clipEnd == null)
     {
-      processSeq(e);
+      // missing clipEnd attribute means clip plays to end so no comparisons
+      // possible
+      return;
     }
-    else if (name.equals("text"))
+
+    if (clipBegin == null)
     {
-      processSrc(e);
+      // set clipBegin to 0 if the attribute isn't set to allow comparisons
+      clipBegin = "0";
     }
-    else if (name.equals("audio"))
+
+    SmilClock start;
+    SmilClock end;
+
+    try
     {
-      processRef(e.getAttribute("src"), XRefChecker.Type.AUDIO);
+      start = new SmilClock(clipBegin);
+      end = new SmilClock(clipEnd);
+    } catch (Exception ex)
+    {
+      // invalid clock time will be reported by the schema
+      return;
     }
-    else if (name.equals("body") || name.equals("par"))
+
+    if (start.compareTo(end) == 1)
     {
-      checkType(e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "type"));
+      // clipEnd is chronologically before clipBegin
+      report.message(MessageId.MED_008, location());
+    }
+
+    else if (start.equals(end))
+    {
+      // clipBegin and clipEnd are equal
+      report.message(MessageId.MED_009, location());
     }
   }
 
   private void checkType(String type)
   {
-    VocabUtil.parsePropertyList(type, vocabs, report,
-        EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()));
-  }
+    Set<Property> propList = VocabUtil.parsePropertyList(type, vocabs, context, location());
 
-  private void processSrc(XMLElement e)
-  {
-    processRef(e.getAttribute("src"), XRefChecker.Type.HYPERLINK);
-
-  }
-
-  private void processRef(String ref, XRefChecker.Type type)
-  {
-    if (ref != null && context.xrefChecker.isPresent())
+    // Check unrecognized properties from the structure vocab
+    for (Property property : propList)
     {
-      ref = PathUtil.resolveRelativeReference(path, ref, null);
-      if (type == XRefChecker.Type.AUDIO)
+      if (StructureVocab.URI.equals(property.getVocabURI())) try
       {
-        String mimeType = context.xrefChecker.get().getMimeType(ref);
-        if (mimeType != null && !OPFChecker30.isBlessedAudioType(mimeType))
-        {
-          report.message(MessageId.MED_005, EPUBLocation.create(path, parser.getLineNumber(), parser.getColumnNumber()), ref, mimeType);
-        }
+        property.toEnum();
+      } catch (UnsupportedOperationException ex)
+      {
+        report.message(MessageId.OPF_088, location(), property.getName());
       }
-      context.xrefChecker.get().registerReference(path, parser.getLineNumber(),
-          parser.getColumnNumber(), ref, type);
     }
   }
 
-  private void processSeq(XMLElement e)
+  private void processTextSrc()
   {
-    processRef(e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "textref"),
-        XRefChecker.Type.HYPERLINK);
+    URL url = checkURL(currentElement().getAttribute("src"));
+    processContentDocumentLink(url);
+  }
+
+  private void processTextRef()
+  {
+    URL url = checkURL(
+        currentElement().getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "textref"));
+    processContentDocumentLink(url);
+  }
+
+  private void processAudioSrc()
+  {
+
+    URL url = checkURL(currentElement().getAttribute("src"));
+
+    // check that the URL has no fragment
+    if (url.fragment() != null)
+    {
+      report.message(MessageId.MED_014, location(), url.fragment());
+      url = URLUtils.docURL(url);
+    }
+
+    if (url != null && context.container.isPresent())
+    {
+
+      // check that the audio type is a core media type resource
+      String mimeType = context.resourceRegistry.get().getMimeType(url);
+      if (mimeType != null && !OPFChecker30.isBlessedAudioType(mimeType))
+      {
+        report.message(MessageId.MED_005, location(), context.relativize(url), mimeType);
+      }
+
+      // register the URL for cross-reference checking
+      registerReference(url, Reference.Type.AUDIO, true);
+
+      // if needed, register we found a remote resource
+      if (context.isRemote(url))
+      {
+        requiredProperties.add(ITEM_PROPERTIES.REMOTE_RESOURCES);
+      }
+    }
+  }
+
+  private void processContentDocumentLink(URL url)
+  {
+    if (url != null && context.container.isPresent())
+    {
+      assert context.overlayTextChecker.isPresent();
+      URL documentURL = URLUtils.docURL(url);
+      if (!context.overlayTextChecker.get().registerOverlay(documentURL,
+          context.opfItem.get().getId()))
+      {
+        report.message(MessageId.MED_011, location(), context.relativize(url));
+      }
+      registerReference(url, Reference.Type.OVERLAY_TEXT_LINK);
+    }
+  }
+
+  private void processGlobalAttrs()
+  {
+    XMLElement e = currentElement();
     checkType(e.getAttributeNS(EpubConstants.EpubTypeNamespaceUri, "type"));
   }
 
-  public void characters(char[] chars, int arg1, int arg2)
-  {
-  }
-
+  @Override
   public void endElement()
   {
+    XMLElement e = currentElement();
+    String name = e.getName();
+    if (name.equals("smil"))
+    {
+      checkItemReferences();
+      checkProperties();
+    }
   }
 
-  public void ignorableWhitespace(char[] chars, int arg1, int arg2)
+  private void checkItemReferences()
   {
+
+    if (this.resourceRefs.isEmpty())
+    {
+      return;
+    }
+
   }
 
-  public void processingInstruction(String arg0, String arg1)
+  protected void checkProperties()
   {
-  }
+    if (!context.container.isPresent()) // single file validation
+    {
+      return;
+    }
 
+    Set<ITEM_PROPERTIES> itemProps = Property.filter(context.properties, ITEM_PROPERTIES.class);
+
+    for (ITEM_PROPERTIES requiredProperty : Sets.difference(requiredProperties, itemProps))
+    {
+      report.message(MessageId.OPF_014, EPUBLocation.of(context),
+          PackageVocabs.ITEM_VOCAB.getName(requiredProperty));
+    }
+  }
 }

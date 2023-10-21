@@ -1,30 +1,50 @@
 package com.adobe.epubcheck.opf;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Locale;
 import java.util.Set;
+
+import org.w3c.epubcheck.core.Checker;
+import org.w3c.epubcheck.core.references.ReferenceRegistry;
+import org.w3c.epubcheck.core.references.ResourceRegistry;
+import org.w3c.epubcheck.util.url.URLUtils;
 
 import com.adobe.epubcheck.api.EPUBProfile;
 import com.adobe.epubcheck.api.FeatureReport;
+import com.adobe.epubcheck.api.LocalizableReport;
 import com.adobe.epubcheck.api.Report;
-import com.adobe.epubcheck.ocf.OCFPackage;
+import com.adobe.epubcheck.ocf.OCFContainer;
+import com.adobe.epubcheck.overlay.OverlayTextChecker;
 import com.adobe.epubcheck.util.EPUBVersion;
 import com.adobe.epubcheck.util.GenericResourceProvider;
+import com.adobe.epubcheck.util.URLResourceProvider;
 import com.adobe.epubcheck.vocab.Property;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
+
+import io.mola.galimatias.GalimatiasParseException;
+import io.mola.galimatias.URL;
 
 /**
  * Holds various contextual objects used during validation. This validation
- * context is used by both {@link ContentChecker} and {@link DocumentValidator}
- * instances.
+ * context is notalby used by {@link Checker} instances.
  * 
  */
 public final class ValidationContext
 {
+
+  /**
+   * The URL of the validated resource. Guaranteed non-null.
+   */
+  public final URL url;
   /**
    * The path to the validated resource. Guaranteed non-null.
    */
@@ -47,6 +67,10 @@ public final class ValidationContext
    */
   public final Report report;
   /**
+   * The locale used to log validation messages. Guaranteed non-null.
+   */
+  public final Locale locale;
+  /**
    * Used to report some features of the validated resource, without logging.
    * Guaranteed non-null.
    */
@@ -57,41 +81,140 @@ public final class ValidationContext
    */
   public final GenericResourceProvider resourceProvider;
   /**
+   * The Package Document item for the validated resource. Is absent if there is
+   * no item representing this resource in the Package Document.
+   */
+  public final Optional<OPFItem> opfItem;
+  /**
    * The OCF Package the resource being validated belongs to. Is absent for
    * single-file validations.
    */
-  public final Optional<OCFPackage> ocf;
+  public final Optional<OCFContainer> container;
   /**
-   * The cross-reference checker, absent for single-file validation.
+   * The publication resource registry, absent for single-file validation.
    */
-  public final Optional<XRefChecker> xrefChecker;
+  public final Optional<ResourceRegistry> resourceRegistry;
+  /**
+   * The references registry, absent for single-file validation
+   */
+  public final Optional<ReferenceRegistry> referenceRegistry;
+  /**
+   * The src checker for media overlay text elements, absent for single-file
+   * validation
+   */
+  public final Optional<OverlayTextChecker> overlayTextChecker;
   /**
    * The set of 'dc:type' values declared at the OPF level. Guaranteed non-null,
    * can be empty.
    */
-  public final Set<String> pubTypes;
+  public final Set<PublicationType> pubTypes;
   /**
    * The set of properties associated to the resource being validated.
    */
   public final Set<Property> properties;
 
-  private ValidationContext(String path, String mimeType, EPUBVersion version, EPUBProfile profile,
-      Report report, FeatureReport featureReport, GenericResourceProvider resourceProvider,
-      Optional<OCFPackage> ocf, Optional<XRefChecker> xrefChecker, Set<String> pubTypes,
-      Set<Property> properties)
+  private ValidationContext(ValidationContextBuilder builder)
   {
-    super();
-    this.path = path;
-    this.mimeType = mimeType;
-    this.version = version;
-    this.profile = profile;
-    this.report = report;
-    this.featureReport = featureReport;
-    this.resourceProvider = resourceProvider;
-    this.ocf = ocf;
-    this.xrefChecker = xrefChecker;
-    this.pubTypes = pubTypes;
-    this.properties = properties;
+    // FIXME 2022 add a default report if not provided
+    // FIXME 2022 add a better default resource provider
+
+    Preconditions.checkState(builder.url != null, "URL must be set");
+    Preconditions.checkState(builder.report != null, "report must be set");
+    this.url = builder.url;
+    this.container = Optional.fromNullable(builder.container);
+    this.resourceRegistry = Optional.fromNullable(builder.resourceRegistry);
+    this.referenceRegistry = Optional.fromNullable(builder.referenceRegistry);
+    this.mimeType = Strings.nullToEmpty(builder.mimeType);
+    this.version = Optional.fromNullable(builder.version).or(EPUBVersion.Unknown);
+    this.profile = Optional.fromNullable(builder.profile).or(EPUBProfile.DEFAULT);
+    this.report = builder.report;
+    this.locale = MoreObjects.firstNonNull(
+        (report instanceof LocalizableReport) ? ((LocalizableReport) report).getLocale() : null,
+        Locale.getDefault());
+    this.featureReport = Optional.fromNullable(builder.featureReport).or(new FeatureReport());
+    this.resourceProvider = Iterables.find(
+        Arrays.asList(builder.container, builder.resourceProvider, new URLResourceProvider()),
+        Predicates.notNull());
+    this.opfItem = Optional.fromNullable((builder.resourceRegistry != null)
+        ? builder.resourceRegistry.getOPFItem(builder.url).orElse(null)
+        : null);
+    this.overlayTextChecker = Optional.fromNullable(builder.overlayTextChecker);
+    this.pubTypes = (builder.pubTypes != null) ? Sets.immutableEnumSet(builder.pubTypes)
+        : EnumSet.noneOf(PublicationType.class);
+    this.properties = builder.properties.build();
+    this.path = computePath();
+  }
+
+  // FIXME 2022 document and test
+  private String computePath()
+  {
+    if (container.isPresent() && !container.get().isRemote(url))
+    {
+      if (url.path() != null && !url.path().isEmpty())
+      {
+        return url.path().substring(1);
+      }
+      else
+      {
+        return "";
+      }
+    }
+    else if ("file".equals(url.scheme()))
+    {
+      return URLUtils.toFilePath(url);
+    }
+    else
+    {
+      return url.toHumanString();
+    }
+  }
+
+  public ValidationContextBuilder copy()
+  {
+    return new ValidationContextBuilder().copy(this);
+  }
+
+  // FIXME 2022 document
+  public boolean isRemote(URL url)
+  {
+    Preconditions.checkArgument(url != null, "URL is null");
+    if (container.isPresent())
+    {
+      return container.get().isRemote(url);
+    }
+    else
+    {
+      return URLUtils.isRemote(url, this.url);
+    }
+  }
+
+  public String relativize(URL url)
+  {
+    Preconditions.checkArgument(url != null, "URL is null");
+    if (container.isPresent())
+    {
+      return container.get().relativize(url);
+    }
+    else
+    {
+      return this.url.relativize(url);
+    }
+  }
+
+  public static final ValidationContextBuilder of(URL url)
+  {
+    return new ValidationContextBuilder().url(url);
+  }
+
+  public static final ValidationContextBuilder test()
+  {
+    try
+    {
+      return new ValidationContextBuilder().url(URL.parse("https://test.example.org"));
+    } catch (GalimatiasParseException e)
+    {
+      throw new AssertionError();
+    }
   }
 
   /**
@@ -101,7 +224,7 @@ public final class ValidationContext
    */
   public static final class ValidationContextBuilder
   {
-    private String path = null;
+    private URL url = null;
     private String mimeType = null;
     private EPUBVersion version = null;
     private EPUBProfile profile = null;
@@ -109,9 +232,11 @@ public final class ValidationContext
     private FeatureReport featureReport = null;
 
     private GenericResourceProvider resourceProvider = null;
-    private OCFPackage ocf = null;
-    private XRefChecker xrefChecker = null;
-    private Set<String> pubTypes = null;
+    private OCFContainer container = null;
+    private ResourceRegistry resourceRegistry = null;
+    private ReferenceRegistry referenceRegistry = null;
+    private OverlayTextChecker overlayTextChecker = null;
+    private Set<PublicationType> pubTypes = null;
     private ImmutableSet.Builder<Property> properties = ImmutableSet.<Property> builder();
 
     public ValidationContextBuilder()
@@ -125,23 +250,25 @@ public final class ValidationContext
 
     public ValidationContextBuilder copy(ValidationContext context)
     {
-      path = context.path;
+      url = context.url;
       mimeType = context.mimeType;
       version = context.version;
       profile = context.profile;
       report = context.report;
       featureReport = context.featureReport;
       resourceProvider = context.resourceProvider;
-      ocf = context.ocf.orNull();
-      xrefChecker = context.xrefChecker.orNull();
+      container = context.container.orNull();
+      resourceRegistry = context.resourceRegistry.orNull();
+      referenceRegistry = context.referenceRegistry.orNull();
+      overlayTextChecker = context.overlayTextChecker.orNull();
       pubTypes = context.pubTypes;
       properties = ImmutableSet.<Property> builder().addAll(context.properties);
       return this;
     }
 
-    public ValidationContextBuilder path(String path)
+    public ValidationContextBuilder url(URL url)
     {
-      this.path = path;
+      this.url = url;
       return this;
     }
 
@@ -181,19 +308,19 @@ public final class ValidationContext
       return this;
     }
 
-    public ValidationContextBuilder ocf(OCFPackage ocf)
+    public ValidationContextBuilder container(OCFContainer container)
     {
-      this.ocf = ocf;
+      this.container = container;
+      if (container != null)
+      {
+        this.resourceRegistry = new ResourceRegistry();
+        this.referenceRegistry = new ReferenceRegistry(container, resourceRegistry);
+        this.overlayTextChecker = new OverlayTextChecker();
+      }
       return this;
     }
 
-    public ValidationContextBuilder xrefChecker(XRefChecker xrefChecker)
-    {
-      this.xrefChecker = xrefChecker;
-      return this;
-    }
-
-    public ValidationContextBuilder pubTypes(Set<String> pubTypes)
+    public ValidationContextBuilder pubTypes(Set<PublicationType> pubTypes)
     {
       this.pubTypes = pubTypes;
       return this;
@@ -217,15 +344,7 @@ public final class ValidationContext
 
     public ValidationContext build()
     {
-      resourceProvider = (resourceProvider == null && ocf != null) ? ocf : resourceProvider;
-      checkNotNull(resourceProvider);
-      checkNotNull(report);
-      return new ValidationContext(Strings.nullToEmpty(path), Strings.nullToEmpty(mimeType),
-          version != null ? version : EPUBVersion.Unknown, profile != null ? profile
-              : EPUBProfile.DEFAULT, report, featureReport != null ? featureReport
-              : new FeatureReport(), resourceProvider, Optional.fromNullable(ocf),
-          Optional.fromNullable(xrefChecker), pubTypes != null ? ImmutableSet.copyOf(pubTypes)
-              : ImmutableSet.<String> of(), properties.build());
+      return new ValidationContext(this);
     }
   }
 
@@ -257,7 +376,7 @@ public final class ValidationContext
      * Returns a predicate that evaluates to <code>true</code> if the given
      * publication <code>dc:type</code> is declared in the context being tested.
      */
-    public static Predicate<ValidationContext> hasPubType(final String type)
+    public static Predicate<ValidationContext> hasPubType(final PublicationType type)
     {
       return new Predicate<ValidationContext>()
       {
@@ -335,6 +454,23 @@ public final class ValidationContext
 
     private ValidationContextPredicates()
     {
+    }
+  }
+
+  public String getMimeType(URL url)
+  {
+    if (url == null) return null;
+    if ("data".equals(url.scheme()))
+    {
+      return URLUtils.getDataURLType(url);
+    }
+    else if (resourceRegistry.isPresent())
+    {
+      return resourceRegistry.get().getMimeType(url);
+    }
+    else
+    {
+      return null;
     }
   }
 

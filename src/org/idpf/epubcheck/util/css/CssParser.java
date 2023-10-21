@@ -30,6 +30,7 @@ import static org.idpf.epubcheck.util.css.CssTokenList.Filters.FILTER_S_CMNT_CDO
 import java.io.IOException;
 import java.io.Reader;
 import java.util.List;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 
 import org.idpf.epubcheck.util.css.CssExceptions.CssException;
@@ -39,15 +40,13 @@ import org.idpf.epubcheck.util.css.CssGrammar.CssConstruct;
 import org.idpf.epubcheck.util.css.CssGrammar.CssConstructFactory;
 import org.idpf.epubcheck.util.css.CssGrammar.CssDeclaration;
 import org.idpf.epubcheck.util.css.CssGrammar.CssSelector;
-import org.idpf.epubcheck.util.css.CssGrammar.CssSelectorCombinator;
 import org.idpf.epubcheck.util.css.CssGrammar.CssSelectorConstructFactory;
-import org.idpf.epubcheck.util.css.CssGrammar.CssSimpleSelectorSequence;
 import org.idpf.epubcheck.util.css.CssToken.CssTokenConsumer;
 import org.idpf.epubcheck.util.css.CssTokenList.CssTokenIterator;
 import org.idpf.epubcheck.util.css.CssTokenList.PrematureEOFException;
 
+import com.adobe.epubcheck.util.Messages;
 import com.google.common.base.Predicate;
-import com.google.common.collect.Lists;
 
 /**
  * A CSS parser.
@@ -57,6 +56,32 @@ import com.google.common.collect.Lists;
 public final class CssParser
 {
   private final boolean debug = false;
+  private final Messages messages;
+  private final CssSelectorConstructFactory cssSelectorFactory;
+
+  /**
+   * Builds a new CSS parser reporting errors in the default locale.
+   * <p>
+   * The localized constructor {@link #CssParser(Locale)} should be preferred over
+   * this one, except for tests.
+   * </p>
+   */
+  public CssParser()
+  {
+    this(Locale.getDefault());
+  }
+
+  /**
+   * Builds a new CSS parser that will report parsing errors in the given locale.
+   * 
+   * @param locale
+   *          the locale used in the parsing errors.
+   */
+  public CssParser(Locale locale)
+  {
+    this.messages = Messages.getInstance(locale, CssParser.class);
+    this.cssSelectorFactory = new CssSelectorConstructFactory(locale);
+  }
 
   /*
     * TODOs
@@ -181,7 +206,7 @@ public final class CssParser
       {
         tokens.add(token);
       }
-    }).scan();
+    }, messages.getLocale()).scan();
 
     return tokens.iterator(FILTER_S_CMNT); // default filter
   }
@@ -199,11 +224,17 @@ public final class CssParser
     char errChar = '{';
     try
     {
-      List<CssSelector> selectors = handleSelectors(start, iter, err);
+      List<CssSelector> selectors = cssSelectorFactory.createSelectorList(start, iter, err);
       errChar = '}';
       if (selectors == null)
       {
         // handleSelectors() has issued errors, we forward
+        iter.next(MATCH_CLOSEBRACE);
+        return;
+      }
+      if (MATCH_CLOSEPAREN.apply(iter.last)) {
+        err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN, iter.last.location,
+            messages.getLocale(), iter.last.chars));
         iter.next(MATCH_CLOSEBRACE);
         return;
       }
@@ -222,8 +253,8 @@ public final class CssParser
     }
     catch (NoSuchElementException nse)
     {
-      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF,
-          iter.last.location, "'" + errChar + "'"));
+      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+          messages.getLocale(), "'" + errChar + "'"));
       throw new PrematureEOFException();
     }
 
@@ -234,9 +265,8 @@ public final class CssParser
   }
 
   /**
-   * With start token being the first non-ignorable token inside the
-   * declaration block, iterate issuing CssDeclaration objects until the block
-   * ends.
+   * With start token being the first non-ignorable token inside the declaration
+   * block, iterate issuing CssDeclaration objects until the block ends.
    */
   private void handleDeclarationBlock(CssToken start, CssTokenIterator iter,
       final CssContentHandler doc, CssErrorHandler err) throws
@@ -294,8 +324,8 @@ public final class CssParser
       }
       catch (NoSuchElementException nse)
       {
-        err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location, "';' "
-            + Messages.get("or") + " '}'"));
+        err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+            messages.getLocale(), "';' " + messages.get("or") + " '}'"));
         throw new PrematureEOFException();
       }
     }
@@ -313,8 +343,8 @@ public final class CssParser
 
     if (name.type != CssToken.Type.IDENT)
     {
-      err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN, name.location, name
-          .getChars(), Messages.get("a_property_name")));
+      err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN, name.location,
+          messages.getLocale(), name.getChars(), messages.get("a_property_name")));
       return null;
     }
 
@@ -324,14 +354,15 @@ public final class CssParser
     {
       if (!MATCH_COLON.apply(iter.next()))
       {
-        err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN, name.location, iter.last
-            .getChars(), ":"));
+        err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN, name.location,
+            messages.getLocale(), iter.last.getChars(), ":"));
         return null;
       }
     }
     catch (NoSuchElementException nse)
     {
-      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location, ":"));
+      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+          messages.getLocale(), ":"));
       throw new PrematureEOFException();
     }
 
@@ -344,9 +375,8 @@ public final class CssParser
         {
           if (declaration.components.size() < 1)
           {
-            err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN,
-                iter.last.location, value.getChar(), Messages
-                .get("a_property_value")));
+            err.error(new CssGrammarException(GRAMMAR_EXPECTING_TOKEN, iter.last.location,
+                messages.getLocale(), value.getChar(), messages.get("a_property_value")));
             return null;
           }
           else
@@ -358,8 +388,8 @@ public final class CssParser
         {
           if (!handlePropertyValue(declaration, value, iter, isStyleAttribute))
           {
-            err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN,
-                iter.last.location, iter.last.getChars()));
+            err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN, iter.last.location,
+                messages.getLocale(), iter.last.getChars()));
             return null;
           }
           else
@@ -374,8 +404,8 @@ public final class CssParser
     }
     catch (NoSuchElementException nse)
     {
-      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location, "';' "
-          + Messages.get("or") + " '}'"));
+      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+          messages.getLocale(), "';' " + messages.get("or") + " '}'"));
       throw new PrematureEOFException();
     }
 
@@ -427,79 +457,6 @@ public final class CssParser
   }
 
   /**
-   * With start inparam being the first significant token in a selector, build
-   * the selector group (aka comma separated selectors), expected return when
-   * iter.last is '{'. On error, issue to errorlistener, and return
-   * (caller will forward).
-   *
-   * @return A syntactically valid CssSelector list, or null if fail.
-   * @throws CssException
-   */
-  private List<CssSelector> handleSelectors(CssToken start, CssTokenIterator iter,
-      CssErrorHandler err) throws
-      CssException
-  {
-
-    List<CssSelector> selectors = Lists.newArrayList();
-    boolean end = false;
-    while (true)
-    { // comma loop
-      CssSelector selector = new CssSelector(start.location);
-      while (true)
-      { //combinator loop
-        CssSimpleSelectorSequence seq = CssSelectorConstructFactory
-            .createSimpleSelectorSequence(start, iter, err);
-        if (seq == null)
-        {
-          //errors already issued
-          return null;
-        }
-        selector.components.add(seq);
-        int idx = iter.index();
-        start = iter.next();
-        if (MATCH_OPENBRACE.apply(start))
-        {
-          end = true;
-          break;
-        }
-        if (MATCH_COMMA.apply(start))
-        {
-          break;
-        }
-
-        CssSelectorCombinator comb =
-            CssSelectorConstructFactory.createCombinator(start, iter, err);
-        if (comb != null)
-        {
-          selector.components.add(comb);
-          start = iter.next();
-        }
-        else if (iter.list.get(idx + 1).type == CssToken.Type.S)
-        {
-          selector.components.add(new CssSelectorCombinator(' ', start.location));
-        }
-        else
-        {
-          err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN,
-              iter.last.location, iter.last.chars));
-          return null;
-        }
-      } //combinator loop
-      selectors.add(selector);
-      if (end)
-      {
-        break;
-      }
-      if (debug)
-      {
-        checkState(MATCH_COMMA.apply(start));
-      }
-      start = iter.next();
-    } // comma loop
-    return selectors;
-  }
-
-  /**
    * With start token required to be an ATKEYWORD, collect at-rule parameters if
    * any, and if the at-rule has a block, invoke those handlers.
    */
@@ -535,8 +492,8 @@ public final class CssParser
           if (param == null)
           {
             // issue error, forward, then return
-            err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN,
-                iter.last.location, iter.last.chars));
+            err.error(new CssGrammarException(GRAMMAR_UNEXPECTED_TOKEN, iter.last.location,
+                messages.getLocale(), iter.last.chars));
             //skip to atrule closebrace, ignoring any inner blocks
             int stack = 0;
             while (true)
@@ -572,8 +529,8 @@ public final class CssParser
     {
       // UAs required to close any open constructs on premature EOF
       doc.startAtRule(atRule);
-      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location, "';' "
-          + Messages.get("or") + " '{'"));
+      err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+          messages.getLocale(), "';' " + messages.get("or") + " '{'"));
       doc.endAtRule(atRule.getName().get());
       throw new PrematureEOFException();
     }
@@ -611,7 +568,8 @@ public final class CssParser
       }
       catch (NoSuchElementException nse)
       {
-        err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location, "'}'"));
+        err.error(new CssGrammarException(GRAMMAR_PREMATURE_EOF, iter.last.location,
+            messages.getLocale(), "'}'"));
         doc.endAtRule(atRule.name.get());
         throw new PrematureEOFException();
       }
@@ -729,23 +687,6 @@ public final class CssParser
             || cc.type == CssConstruct.Type.QUANTITY
             || (cc.type == CssConstruct.Type.SYMBOL && cc.toCssString().equals("+"))
             || (cc.type == CssConstruct.Type.SYMBOL && cc.toCssString().equals("-"))
-            ;
-      }
-    };
-
-    /**
-     * A context restriction for elements inside a negation pseudo.
-     */
-    static final Predicate<CssConstruct> PSEUDO_NEGATION = new Predicate<CssConstruct>()
-    {
-      public boolean apply(final CssConstruct cc)
-      {
-        checkNotNull(cc);
-        return cc.type == CssConstruct.Type.TYPE_SELECTOR
-            || cc.type == CssConstruct.Type.HASHNAME
-            || cc.type == CssConstruct.Type.CLASSNAME
-            || (cc.type == CssConstruct.Type.ATTRIBUTE_SELECTOR)
-            || (cc.type == CssConstruct.Type.PSEUDO)
             ;
       }
     };

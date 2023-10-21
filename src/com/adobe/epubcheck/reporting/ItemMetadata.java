@@ -8,7 +8,6 @@ import org.codehaus.jackson.annotate.JsonProperty;
 
 import com.adobe.epubcheck.util.FeatureEnum;
 
-@SuppressWarnings("FieldCanBeLocal")
 public class ItemMetadata implements Comparable<ItemMetadata>
 {
   @JsonProperty
@@ -32,26 +31,15 @@ public class ItemMetadata implements Comparable<ItemMetadata>
   @JsonProperty
   private boolean isLinear;
   @JsonProperty
-  private Integer navigationOrder = null;
-  @JsonProperty
-  private boolean isHTML5;
-  @JsonProperty
   private Boolean isFixedFormat = null;
   @JsonProperty
   private boolean isScripted;
-  @JsonProperty
-  private boolean scriptSrc;
-  @JsonProperty
-  private boolean scriptTag;
-  @JsonProperty
-  private boolean scriptInline;
   @JsonProperty
   private String renditionLayout;
   @JsonProperty
   private String renditionOrientation;
   @JsonProperty
   private String renditionSpread;
-  @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
   @JsonProperty
   private final SortedSet<String> referencedItems = new TreeSet<String>();
 
@@ -171,27 +159,6 @@ public class ItemMetadata implements Comparable<ItemMetadata>
       case SPINE_INDEX:
         this.spineIndex = Integer.parseInt(value.trim());
         break;
-      case HAS_HTML5:
-        this.isHTML5 = true;
-        break;
-      case SCRIPT:
-        if (value.equals("inline"))
-        {
-          this.scriptInline = true;
-        }
-        else if (value.equals("external"))
-        {
-          this.scriptSrc = true;
-        }
-        else if (value.equals("javascript"))
-        {
-          this.scriptSrc = true;
-        }
-        else if (value.equals("tag"))
-        {
-          this.scriptTag = true;
-        }
-        break;
       case RENDITION_LAYOUT:
         this.renditionLayout = value;
         break;
@@ -200,9 +167,6 @@ public class ItemMetadata implements Comparable<ItemMetadata>
         break;
       case RENDITION_SPREAD:
         this.renditionSpread = value;
-        break;
-      case NAVIGATION_ORDER:
-        this.navigationOrder = Integer.parseInt(value.trim());
         break;
       default:
         //System.err.printf("unhandled info message feature: found '%s' with value '%s'", feature.toString(), value != null ? value : "null");

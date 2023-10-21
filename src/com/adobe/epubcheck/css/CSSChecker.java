@@ -25,23 +25,19 @@ package com.adobe.epubcheck.css;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
+import java.util.Locale;
 
 import org.idpf.epubcheck.util.css.CssExceptions;
 import org.idpf.epubcheck.util.css.CssParser;
 import org.idpf.epubcheck.util.css.CssSource;
 
 import com.adobe.epubcheck.api.EPUBLocation;
-import com.adobe.epubcheck.api.Report;
 import com.adobe.epubcheck.messages.MessageId;
-import com.adobe.epubcheck.opf.ContentChecker;
+import com.adobe.epubcheck.opf.PublicationResourceChecker;
 import com.adobe.epubcheck.opf.ValidationContext;
 
-public class CSSChecker implements ContentChecker
+public class CSSChecker extends PublicationResourceChecker
 {
-  private final ValidationContext context;
-  private final Report report;
-  private final String path; // css file path when Mode.FILE, host path when
-                             // Mode.STRING
   private final Mode mode;
 
   // Below only used when checking css strings
@@ -49,7 +45,7 @@ public class CSSChecker implements ContentChecker
   private int line; // where css string occurs in host
   private final boolean isStyleAttribute;
 
-  private enum Mode
+  enum Mode
   {
     FILE,
     STRING
@@ -74,30 +70,31 @@ public class CSSChecker implements ContentChecker
   private CSSChecker(ValidationContext context, Mode mode, String value, int line,
       boolean isStyleAttribute)
   {
-    this.context = context;
-    this.report = context.report;
-    this.path = context.path;
+    super(context);
     this.mode = mode;
     this.value = value;
     this.line = line;
     this.isStyleAttribute = isStyleAttribute;
   }
+  
+  @Override
+  protected boolean checkPublicationBeforeContent()
+  {
+    if (this.mode == Mode.FILE) {
+      return super.checkPublicationBeforeContent();
+    }
+    return true;
+  }
 
-  public void runChecks()
+  @Override
+  protected boolean checkContent()
   {
     CssSource source = null;
 
     try
     {
-      if (this.mode == Mode.FILE && !context.ocf.get().hasEntry(path))
-      {
-        report.message(MessageId.RSC_001, EPUBLocation.create(context.ocf.get().getName()),
-            path);
-        return;
-      }
 
-      CSSHandler handler = new CSSHandler(path, context.xrefChecker.orNull(), report,
-          context.version);
+      CSSHandler handler = new CSSHandler(context, mode);
       if (this.mode == Mode.STRING && this.line > -1)
       {
         handler.setStartingLineNumber(this.line);
@@ -109,7 +106,7 @@ public class CSSChecker implements ContentChecker
       this.line = -1;
     } catch (Exception e)
     {
-      report.message(MessageId.PKG_008, EPUBLocation.create(path), e.getMessage());
+      report.message(MessageId.PKG_008, EPUBLocation.of(context), e.getMessage());
     } finally
     {
       if (source != null)
@@ -127,6 +124,7 @@ public class CSSChecker implements ContentChecker
         }
       }
     }
+    return true;
   }
 
   CssSource getCssSource()
@@ -135,22 +133,31 @@ public class CSSChecker implements ContentChecker
     CssSource source = null;
     if (this.mode == Mode.FILE)
     {
-      source = new CssSource(this.path, context.resourceProvider.getInputStream(this.path));
+      source = new CssSource(context.path, context.resourceProvider.openStream(context.url));
       String charset;
       if (source.getInputStream().getBomCharset().isPresent())
       {
-        charset = source.getInputStream().getBomCharset().get().toLowerCase();
-        if (!charset.equals("utf-8") && !charset.startsWith("utf-16"))
+        charset = source.getInputStream().getBomCharset().get().toLowerCase(Locale.ROOT);
+        if (!charset.equals("utf-8"))
         {
-          report.message(MessageId.CSS_004, EPUBLocation.create(path), charset);
+          if (charset.startsWith("utf-16"))
+          {
+            report.message(MessageId.CSS_003, EPUBLocation.of(context), charset);
+          } else {
+            report.message(MessageId.CSS_004, EPUBLocation.of(context), charset);
+          }
         }
-      }
-      if (source.getInputStream().getCssCharset().isPresent())
+      } else if (source.getInputStream().getCssCharset().isPresent())
       {
-        charset = source.getInputStream().getCssCharset().get().toLowerCase();
-        if (!charset.equals("utf-8") && !charset.startsWith("utf-16"))
+        charset = source.getInputStream().getCssCharset().get().toLowerCase(Locale.ROOT);
+        if (!charset.equals("utf-8"))
         {
-          report.message(MessageId.CSS_003, EPUBLocation.create(path, ""), charset);
+          if (charset.startsWith("utf-16"))
+          {
+            report.message(MessageId.CSS_003, EPUBLocation.of(context), charset);
+          } else {
+            report.message(MessageId.CSS_004, EPUBLocation.of(context), charset);
+          }
         }
       }
     }
@@ -165,17 +172,17 @@ public class CSSChecker implements ContentChecker
     {
       if (this.mode == Mode.FILE)
       {
-        new CssParser().parse(source, handler, handler);
+        new CssParser(context.locale).parse(source, handler, handler);
       }
       else
       {
-        new CssParser().parse(new StringReader(this.value), this.path, handler, handler);
+        new CssParser(context.locale).parse(new StringReader(this.value), context.path, handler, handler);
       }
     }
     else
     {
-      new CssParser()
-          .parseStyleAttribute(new StringReader(this.value), this.path, handler, handler);
+      new CssParser(context.locale)
+          .parseStyleAttribute(new StringReader(this.value), context.path, handler, handler);
     }
   }
 }

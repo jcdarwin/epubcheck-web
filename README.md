@@ -13,7 +13,7 @@ However, recent builds of EPUBCheck have not been accompanied by this `.war` fil
 
 So, after running into confusion where a client mistakenly thought their EPUB3 was invalid because it was being checked against an older version of the epubcheck .war file used by a web service, I thought it was high time I worked out how to create a .war from a recent release.
 
-As epubcheck is written in Java and not being a Java programmer myself (and there’s good reason for this, summed up nicely in this post about <a href="http://steve-yegge.blogspot.co.nz/2006/03/execution-in-kingdom-of-nouns.html">Execution in the Kingdom of Nouns</a>), I was a little tremulous about tackling this, but it actually turned out to be relatively easy. The steps are below, and the presumption is that you’re running a Mac build environment (and using the <a href="http://brew.sh/">Homebrew package manager</a>), but it should be relatively easy to adapt them to other environments.
+The steps are below, and the presumption is that you’re running a Mac build environment (and using the <a href="http://brew.sh/">Homebrew package manager</a>), but it should be relatively easy to adapt them to other environments.
 
 # The build process
 
@@ -27,12 +27,30 @@ Note that we need to build using a JDK version which is no older than the Java v
 
 		cd epubcheck/
 		git tag -l
-		git checkout tags/v4.0.2
+		git checkout tags/v5.1.0
+
+* Install <a href="https://github.com/jenv/jenv">jenv</a>:
+
+		brew install jenv
+		echo 'export PATH="$HOME/.jenv/bin:$PATH"' >> ~/.bash_profile
+		echo 'eval "$(jenv init -)"' >> ~/.bash_profile
+
+		# check installed java versions
+		jenv versions
+
+		# will probably report: No JAVA_HOME set
+		jenv doctor
+
+		# set JAVA_HOME
+		jenv enable-plugin export
+		exec $SHELL -l
+
+* More notes about using jenv can be found <a href="https://www.baeldung.com/jenv-multiple-jdk">here</a>
 
 * Install <a href="http://maven.apache.org/">maven</a>, and use it to build the release (this may take some time, because of maven needing to boostrap itself)
 
 		brew install maven
-		mvn install
+		mvn clean install
 
 * This will create a .jar file in `epubcheck/target/`, e.g. `epubcheck.jar`
 
@@ -43,9 +61,11 @@ Note that we need to build using a JDK version which is no older than the Java v
 * Make some changes to the build file, `epubcheck-web\build-war.xml`,
 specifically include the correct version number, as found in the name of .jar file (e.g.)
 
-		<property name="version" value="4.0.2" />
+		<property name="version" value="5.1.0" />
 
-* If epubcheck has updated their libraries, we'll need to copy them over to `lib`, and ensure that they're referenced in the classpath in the `build-war.xml`.  We should also copy over `epubcheck.jar` that we've build or downloaded.  Hence, e.g.:
+* If epubcheck has updated their libraries, we'll need to copy them over to `lib`, and ensure that they're referenced in the classpath in the `build-war.xml`.  You'll find the required libraries in the `lib` folder in the compiled zip file, e.g. `target/epubcheck-5.1.0.zip`
+
+* We should also copy over `epubcheck.jar` that we've built or downloaded.  Hence, e.g.:
 
 		<path id="epubcheckServlet.classpath">
 		...
@@ -93,7 +113,32 @@ As we are not building `epubcheck.jar`, we should comment out references to it:
 		-->
 
 
-* Also, we may need to include other source libraries from epubcheck into the `src` folder.
+* Also, we need to copy other source libraries from `epubcheck/src/main/java` into the `src` folder.
+
+* We also need to copy `extra/com/adobe/epubcheck/web` to `src/com/adobe/epubcheck/web`, as this provides the HttpServlet functionality.
+
+* Add the code below beneath the `check` method in `src/com/adobe/epubcheck/api/EpubCheck.java`:
+
+		/**
+		* Validate the file. Return true if no errors or warnings found.
+		*/
+		public boolean checkForWeb()
+		{
+			int result = doValidate();
+			if (result == 0)
+				return true;
+			return false;
+		}
+
+* Change the code in the `warning` method in `src/com/adobe/epubcheck/util/WriterReportImpl.java` to be:
+
+		void warning(String resource, int line, int column, String message)
+		{
+			message = fixMessage(message);
+			if (message == null || message == "") return;
+			out.println("WARNING: " + (resource == null ? "[top level]" : resource)
+				+ (line <= 0 ? "" : "(" + line + (column <= 0 ? "" : "," + column) + ")") + ": " + message);
+		}
 
 * Place your customised HTML (as `index.html`) and CSS in `epubcheck-web\http_root` &#8212; at a minimum you'll need:
 
@@ -125,14 +170,36 @@ As we are not building `epubcheck.jar`, we should comment out references to it:
 
 		ant -f build-war.xml
 
+* You may receive errors similar to the following:
+
+		[javac]   (use -source 8 or higher to enable lambda expressions)
+		[javac] /Users/jasondarwin/workspace/epubcheck-web/src/com/adobe/epubcheck/ops/OPSHandler30.java:607: error: lambda expressions are not supported in -source 1.7
+		[javac]         .anyMatch(mimetype -> OPFChecker30.isCoreMediaType(mimetype));
+		[javac]                            ^
+		[javac]   (use -source 8 or higher to enable lambda expressions)
+
+* In this case, update the `source` attribute in the `build-war.xml`:
+
+		<target name="compile" description="Compiles all src classes" depends="removeClasses">
+			<javac 	srcdir="${epubcheck.web.base.dir}/src"
+					destdir="${epubcheck.web.build.dir}"
+					source="8"
+					classpathref="epubcheckServlet.classpath"
+					debug="true"
+					includeantruntime="false"
+					>
+				<exclude name="**/SampleServer.java"/>
+			</javac>
+		</target>
+
 * Install the `.war` (by dropping it in tomcat's `webapps` directory) and restart tomcat
 
 		cd /usr/local/tomcat/webapps
-		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-4.0.2.war epubcheck.war
+		cp /tmp/epubcheck/epubcheck-web/dist/epubcheck-5.1.0.war epubcheck.war
 		/etc/init.d/tomcat start
 
 Once Tomcat’s restarted, you should be able to see the epubcheck service at [http://localhost:8080/epubcheck](http://localhost:8080/epubcheck).
 
-On my system I use Apache to proxy requests from port 80 to 8080, so I can make it available as I do at [http://mebooks.co.nz/epubcheck/](http://mebooks.co.nz/epubcheck/)
+On my system I use Apache to proxy requests from port 80 to 8080, so I can make it available as I do at [http://epubcheck.mebooks.co.nz/](http://epubcheck.mebooks.co.nz/)
 
 

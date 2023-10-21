@@ -3,7 +3,7 @@
 <project default="buildEpubCheckWAR" basedir=".">
 <!-- comment out any reference to epubcheck.jar build -->
 <!--
-    <property name="epubcheck.base.dir" value="${basedir}" />	
+    <property name="epubcheck.base.dir" value="${basedir}" />
 	<property name="epubcheck.src.dir" value="${epubcheck.base.dir}/src"/>
 	<property name="epubcheck.jingsrc.dir" value="${epubcheck.base.dir}/jingsrc"/>
 	<property name="epubcheck.build.dir" value="${epubcheck.base.dir}/target/classes"/>
@@ -14,9 +14,9 @@
 	<property name="epubcheck.web.http_root" value="${epubcheck.web.base.dir}/http_root" />
 	<property name="epubcheck.web.dist.dir" value="${epubcheck.web.base.dir}/dist" />
 	<property name="epubcheck.web.build.dir" value="${epubcheck.web.base.dir}/bin" />
-	
+
 <!-- set the version to match that of epubcheck.jar -->
-	<property name="version" value="4.0.2" />
+	<property name="version" value="5.1.0" />
 	<property name="epubcheckweb.WAR.filename" value="epubcheck-${version}.war" />
 
 	<path id="epubcheckServlet.classpath">
@@ -26,18 +26,65 @@
 			<include name="javax.servlet-*.jar" />
 		</fileset>
 		<fileset dir="${epubcheck.web.includelibs}">
+			<include name="accessors-smart-*.jar" />
+			<!-- <include name="apiguardian-api-*.jar" /> -->
+			<include name="asm-*.jar" />
+			<include name="checker-qual-*.jar" />
+			<!-- <include name="ci-environment-*.jar" /> -->
 			<include name="common-image-*.jar" />
 			<include name="common-io-*.jar" />
 			<include name="common-lang-*.jar" />
+			<include name="commons-codec-*.jar" />
 			<include name="commons-compress-*.jar" />
-			<include name="guava-*.jar" />
+			<!-- <include name="cucumber-core-*.jar" />
+			<include name="cucumber-expressions-*.jar" />
+			<include name="cucumber-gherkin-*.jar" />
+			<include name="cucumber-gherkin-messages-*.jar" />
+			<include name="cucumber-java-*.jar" />
+			<include name="cucumber-junit-*.jar" />
+			<include name="cucumber-picocontainer-*.jar" />
+			<include name="cucumber-plugin-*.jar" />
+			<include name="datatable-*.jar" />
+			<include name="docstring-*.jar" /> -->
+			<include name="error_prone_annotations-*.jar" />
+			<include name="failureaccess-*.jar" />
+			<include name="galimatias-*.jar" />
+			<!-- <include name="gherkin-*.jar" /> -->
+			<include name="guava-31.1-jre.jar" />
+			<!-- <include name="hamcrest-*.jar" />
+			<include name="hamcrest-core-*.jar" />
+			<include name="html-formatter-*.jar" /> -->
+			<include name="httpclient5-*.jar" />
+			<include name="httpcore5-*.jar" />
+			<include name="httpcore5-h2-*.jar" />
+			<include name="icu4j-*.jar" />
+			<include name="imageio-core-*.jar" />
 			<include name="imageio-jpeg-*.jar" />
 			<include name="imageio-metadata-*.jar" />
+			<include name="isorelax-*.jar" />
+			<include name="j2objc-annotations-*.jar" />
 			<include name="jackson-core-asl-*.jar" />
 			<include name="jackson-mapper-asl-*.jar" />
 			<include name="jing-*.jar" />
+			<include name="json-path-*.jar" />
+			<include name="json-path-assert-*.jar" />
+			<!-- <include name="json-simple-*.jar" /> -->
+			<include name="json-smart-*.jar" />
+			<include name="jsr305-*.jar" />
+			<!-- <include name="junit-*.jar" /> -->
+			<include name="listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar" />
+			<!-- <include name="messages-*.jar" /> -->
+			<!-- <include name="picocontainer-*.jar" /> -->
 			<include name="sac-*.jar" />
-			<include name="Saxon-*.jar" />
+			<include name="Saxon-HE-*.jar" />
+			<include name="slf4j-api-*.jar" />
+			<include name="slf4j-nop-*.jar" />
+			<!-- <include name="tag-expressions-*.jar" /> -->
+			<include name="xercesImpl-*.jar" />
+			<include name="xml-apis-*.jar" />
+			<include name="xmlresolver-4.4.3-data.jar" />
+			<include name="xmlresolver-*.jar" />
+			<!-- <include name="xmlunit-*.jar" /> -->
 		<!-- add the epubcheck.jar file in the same directory as these other library includes -->
 			<include name="epubcheck.jar" />
 		</fileset>
@@ -68,7 +115,7 @@
 	<target name="compile" description="Compiles all src classes" depends="removeClasses">
 		<javac 	srcdir="${epubcheck.web.base.dir}/src"
 				destdir="${epubcheck.web.build.dir}"
- 				source="1.5"
+ 				source="8"
 				classpathref="epubcheckServlet.classpath"
 				debug="true"
 				includeantruntime="false"

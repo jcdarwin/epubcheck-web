@@ -23,68 +23,62 @@
 package com.adobe.epubcheck.ncx;
 
 import com.adobe.epubcheck.api.EPUBLocation;
-import com.adobe.epubcheck.api.Report;
 import com.adobe.epubcheck.messages.MessageId;
-import com.adobe.epubcheck.ocf.OCFPackage;
-import com.adobe.epubcheck.opf.ContentChecker;
+import com.adobe.epubcheck.opf.PublicationResourceChecker;
 import com.adobe.epubcheck.opf.ValidationContext;
-import com.adobe.epubcheck.util.EPUBVersion;
+import com.adobe.epubcheck.util.FeatureEnum;
 import com.adobe.epubcheck.xml.XMLParser;
 import com.adobe.epubcheck.xml.XMLValidators;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterables;
 
-public class NCXChecker implements ContentChecker
+public class NCXChecker extends PublicationResourceChecker
 {
-  private final ValidationContext context;
-  private final Report report;
-  private final String path;
+
+  private String ncxId = null;
 
   public NCXChecker(ValidationContext context)
   {
+    super(context);
     Preconditions.checkState("application/x-dtbncx+xml".equals(context.mimeType));
-    this.context = context;
-    this.report = context.report;
-    this.path = context.path;
   }
 
-  public void runChecks()
+  @Override
+  protected boolean checkContent()
   {
-    OCFPackage ocf = context.ocf.get();
-    if (!ocf.hasEntry(path))
-    {
-      report.message(MessageId.RSC_001, EPUBLocation.create(ocf.getName()), path);
-    }
-    else if (!ocf.canDecrypt(path))
-    {
-      report.message(MessageId.RSC_004, EPUBLocation.create(ocf.getName()), path);
-    }
-    else
-    {
-      // relaxng
-      XMLParser ncxParser;
-      NCXHandler ncxHandler;
+    // relaxng
+    XMLParser ncxParser;
+    NCXHandler ncxHandler;
 
-      ncxParser = new XMLParser(context);
-      ncxParser.addValidator(XMLValidators.NCX_RNG.get());
-      ncxParser.addValidator(XMLValidators.NCX_SCH.get());
-      ncxHandler = new NCXHandler(ncxParser, path, context.xrefChecker.get());
-      ncxParser.addXMLHandler(ncxHandler);
-      ncxParser.process();
+    ncxParser = new XMLParser(context);
+    ncxParser.addValidator(XMLValidators.NCX_RNG.get());
+    ncxParser.addValidator(XMLValidators.NCX_SCH.get());
+    ncxHandler = new NCXHandler(context);
+    ncxParser.addContentHandler(ncxHandler);
+    ncxParser.process();
 
-      if (context.version == EPUBVersion.VERSION_2)
+    // report this for EPUB2 and ALSO for EPUB3 (see discussion in #669)
+    ncxId = ncxHandler.getUid();
+    if (ncxId != null && !ncxId.equals(ncxId.trim()))
+    {
+      report.message(MessageId.NCX_004, EPUBLocation.of(context));
+    }
+    return true;
+  }
+
+  @Override
+  protected boolean checkPublicationAfterContent()
+  {
+    // Check that the ID matches the OPF’s ID
+    if (context.featureReport.hasFeature(FeatureEnum.UNIQUE_IDENT))
+    {
+      String uid = Iterables.get(context.featureReport.getFeature(FeatureEnum.UNIQUE_IDENT), 0)
+          .getValue().get();
+      if (uid != null && ncxId != null && !uid.equals(ncxId.trim()))
       {
-        String ncxId = ncxHandler.getUid();
-        if (ncxId != null && !ncxId.equals(ncxId.trim()))
-        {
-          report.message(MessageId.NCX_004, ncxParser.getLocation());
-        }
-        // FIXME improve way to get this EPUB 2's single OPF
-        String uid = ocf.getOpfData().values().iterator().next().getUniqueIdentifier();
-        if (uid != null && ncxId != null && !uid.equals(ncxId.trim()))
-        {
-          report.message(MessageId.NCX_001, ncxParser.getLocation(), ncxHandler.getUid(), uid);
-        }
+        report.message(MessageId.NCX_001, EPUBLocation.of(context), ncxId, uid);
       }
     }
+    return true;
   }
 }

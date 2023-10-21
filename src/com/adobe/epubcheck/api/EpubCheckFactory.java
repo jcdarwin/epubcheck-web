@@ -25,11 +25,11 @@ package com.adobe.epubcheck.api;
 import java.io.File;
 import java.io.IOException;
 
-import com.adobe.epubcheck.opf.DocumentValidator;
-import com.adobe.epubcheck.opf.DocumentValidatorFactory;
+import org.w3c.epubcheck.core.Checker;
+
 import com.adobe.epubcheck.opf.ValidationContext;
 
-public class EpubCheckFactory implements DocumentValidatorFactory
+public class EpubCheckFactory
 {
   static private final EpubCheckFactory instance = new EpubCheckFactory();
 
@@ -38,13 +38,14 @@ public class EpubCheckFactory implements DocumentValidatorFactory
     return instance;
   }
 
-  public DocumentValidator newInstance(ValidationContext context)
+  public Checker newInstance(ValidationContext context)
   {
+    //FIXME next test on context.url instead of context.path
     if (context.path.startsWith("http://") || context.path.startsWith("https://"))
     {
       try
       {
-        return new EpubCheck(context.resourceProvider.getInputStream(context.path), context.report,
+        return new EpubCheck(context.resourceProvider.openStream(context.url), context.report,
             context.path, context.profile);
       } catch (IOException e)
       {
