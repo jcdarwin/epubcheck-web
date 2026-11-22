@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee https://jakarta.ee/xml/ns/jakartaee/web-app_6_1.xsd"
+         version="6.1">
+
+  <display-name>EPUBCheck for Web</display-name>
+  <description>
+    Validates uploaded EPUB files with EPUBCheck (https://github.com/w3c/epubcheck).
+  </description>
+
+  <servlet>
+    <servlet-name>Check</servlet-name>
+    <servlet-class>com.adobe.epubcheck.web.EpubCheckServlet</servlet-class>
+  </servlet>
+
+  <servlet-mapping>
+    <servlet-name>Check</servlet-name>
+    <url-pattern>/Check</url-pattern>
+  </servlet-mapping>
+
+  <welcome-file-list>
+    <welcome-file>index.html</welcome-file>
+  </welcome-file-list>
+
+</web-app>

@@ -1,0 +1,4 @@
+*
+!src/main/java/
+!webapp/
+**/.DS_Store
