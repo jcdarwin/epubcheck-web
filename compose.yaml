@@ -1,0 +1,11 @@
+# Local run: http://localhost:8080/epubcheck/
+#   docker compose up --build
+services:
+  epubcheck-web:
+    build:
+      context: .
+      platforms: [linux/amd64]
+    image: epubcheck-web:5.4.0-1
+    platform: linux/amd64   # the droplet's architecture; runs under emulation on Apple Silicon
+    ports:
+      - "8080:8080"

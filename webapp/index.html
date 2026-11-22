@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EPUBCheck for Web</title>
+  <!--
+    Default page for epubcheck-web. A branding image can replace this file (and add its own
+    styles and images) by copying over webapps/epubcheck/ in an image built FROM epubcheck-web.
+    Keep the form contract: POST to the relative action "Check", multipart, a field named "file".
+  -->
+  <style>
+    :root { color-scheme: light dark; --accent: #2563eb; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.6rem; margin-bottom: .25rem; }
+    form { margin: 2rem 0; padding: 1.5rem; border: 1px solid #8884; border-radius: .5rem; }
+    button { margin-top: 1rem; padding: .5rem 1.25rem; font: inherit; border: 0; border-radius: .35rem;
+             background: var(--accent); color: #fff; cursor: pointer; }
+    button { position: relative; }
+    /* Loading state: hide the label (keeping the button's size) and show a centred spinner. */
+    button.is-loading { color: transparent; cursor: progress; }
+    button.is-loading::before { content: ""; position: absolute; top: 50%; left: 50%;
+             width: 1em; height: 1em; margin: -.5em 0 0 -.5em; border: 2px solid #fff;
+             border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .note { color: #888; font-size: .9rem; }
+    #message { color: #c0392b; }
+  </style>
+</head>
+<body>
+  <h1>EPUBCheck for Web</h1>
+  <p>Check an EPUB 2 or EPUB 3 file against the EPUB specifications with
+    <a href="https://github.com/w3c/epubcheck">EPUBCheck</a>.</p>
+
+  <form id="check" action="Check" method="POST" enctype="multipart/form-data">
+    <label for="file">EPUB file</label><br>
+    <input id="file" type="file" name="file" accept=".epub,application/epub+zip" required>
+    <p id="message" role="alert"></p>
+    <button id="submit" type="submit">Check validity</button>
+  </form>
+
+  <p class="note">Files up to 250 MB. For larger files, use the EPUBCheck command-line tool.</p>
+
+  <script>
+    var MAX_BYTES = 250 * 1024 * 1024;
+    var form = document.getElementById('check');
+    var file = document.getElementById('file');
+    var message = document.getElementById('message');
+    var submit = document.getElementById('submit');
+    form.addEventListener('submit', function (event) {
+      if (file.files.length && file.files[0].size > MAX_BYTES) {
+        event.preventDefault();
+        message.textContent = 'That file is larger than 250 MB. Please use the EPUBCheck command-line tool for large files.';
+        return;
+      }
+      message.textContent = '';
+      submit.disabled = true;
+      submit.classList.add('is-loading');
+    });
+    // Reset the button when the page is restored from the back/forward cache.
+    window.addEventListener('pageshow', function () {
+      submit.disabled = false;
+      submit.classList.remove('is-loading');
+    });
+  </script>
+</body>
+</html>
