@@ -32,6 +32,9 @@ The only code in this repo is the servlet (`src/main/java/com/adobe/epubcheck/we
 
 The webapp is unpacked at `/usr/local/tomcat/webapps/epubcheck/`, with a plain default page (`webapp/index.html`).
 
+Tomcat logs only to the console (there are no log files and no access log), so `docker logs` has everything.
+Set a size limit on the container's log (for example `--log-opt max-size=10m --log-opt max-file=5`).
+
 Note that `epubcheck.jar` is unpacked into `WEB-INF/classes` rather than placed in `WEB-INF/lib`. It replaces some of
 Jing's classes and resources, so it must load before `jing-*.jar`. Tomcat doesn't order `WEB-INF/lib`, but always
 loads `WEB-INF/classes` first.

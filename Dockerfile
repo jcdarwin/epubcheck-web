@@ -33,6 +33,17 @@ RUN set -eux; \
     # Don't reveal the Tomcat version, or stack traces, on Tomcat's own error pages.
     sed -i 's#</Host>#  <Valve className="org.apache.catalina.valves.ErrorReportValve" showReport="false" showServerInfo="false"/>\n      </Host>#' "$CATALINA_HOME"/conf/server.xml; \
     grep -q 'showServerInfo="false"' "$CATALINA_HOME"/conf/server.xml; \
+    # Log only to the console, so Docker's log (rotated by the host) is the one log. Drop the access
+    # log, which grows a file a day forever; the reverse proxy logs requests.
+    sed -i '/<Valve className="org.apache.catalina.valves.AccessLogValve"/,/\/>/d' "$CATALINA_HOME"/conf/server.xml; \
+    ! grep -q AccessLogValve "$CATALINA_HOME"/conf/server.xml; \
+    printf '%s\n' \
+        'handlers = java.util.logging.ConsoleHandler' \
+        '.handlers = java.util.logging.ConsoleHandler' \
+        'java.util.logging.ConsoleHandler.level = FINE' \
+        'java.util.logging.ConsoleHandler.formatter = org.apache.juli.OneLineFormatter' \
+        'java.util.logging.ConsoleHandler.encoding = UTF-8' \
+        > "$CATALINA_HOME"/conf/logging.properties; \
     addgroup -S tomcat && adduser -S -G tomcat -H -h "$CATALINA_HOME" tomcat; \
     # The tarball ships files as 640/750: let the tomcat group read and run them, but not change them.
     chown -R root:tomcat "$CATALINA_HOME"; \
